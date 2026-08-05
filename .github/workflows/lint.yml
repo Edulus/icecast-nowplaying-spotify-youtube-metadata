@@ -1,0 +1,23 @@
+name: Syntax check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  syntax-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Compile Python scripts
+        run: python -m py_compile now_playing.py nowplaying_poller.py
+
+      - name: Validate manifest.json
+        run: python -c "import json; json.load(open('chrome-extension/manifest.json'))"

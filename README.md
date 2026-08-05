@@ -51,7 +51,9 @@ Chrome extension (audible tab, HTTP POST) --/
 2. `pip install -r requirements.txt`
 3. Copy `.env.example` to `.env` and fill in your Icecast details (see
    below). **If creating `.env` in Notepad, use "Save as type: All Files"**
-   or it will save as `.env.txt` and be silently ignored.
+   or it will save as `.env.txt` and be silently ignored. Leave
+   `ICECAST_SCHEME` as `http` unless your host requires `https` (some hosted
+   providers do).
 4. Load the extension: open `chrome://extensions`, enable Developer Mode,
    "Load unpacked", select the `chrome-extension/` folder.
 5. Run `start_pipeline.bat` (or run `now_playing.py` and
