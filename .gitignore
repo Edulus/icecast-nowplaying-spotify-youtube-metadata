@@ -1,0 +1,5 @@
+.env
+*.log
+now_playing.txt
+__pycache__/
+*.pyc

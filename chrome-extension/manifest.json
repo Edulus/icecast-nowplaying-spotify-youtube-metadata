@@ -1,0 +1,11 @@
+{
+  "manifest_version": 3,
+  "name": "Now Playing Reporter (YouTube -> Icecast pipeline)",
+  "version": "1.0.0",
+  "description": "Reports the currently audible YouTube tab's title to a local now-playing server on localhost.",
+  "permissions": ["tabs", "alarms"],
+  "host_permissions": ["http://127.0.0.1:8765/*"],
+  "background": {
+    "service_worker": "background.js"
+  }
+}
