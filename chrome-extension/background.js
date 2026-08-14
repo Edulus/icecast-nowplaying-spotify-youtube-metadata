@@ -28,9 +28,25 @@ async function reportNowPlaying() {
 
   const ytTab = tabs.find((t) => t.url && YOUTUBE_URL_PATTERN.test(t.url));
 
-  const payload = ytTab && ytTab.title
-    ? { title: ytTab.title }
-    : { idle: true };
+  let payload = { idle: true };
+  if (ytTab && ytTab.title) {
+    payload = { title: ytTab.title };
+    try {
+      // Ask the content script in that tab for the channel name so we can
+      // report "Channel - Title" instead of just the (often artist-less)
+      // video title. This fails harmlessly if the content script hasn't
+      // loaded yet (e.g. tab just opened) -- we fall back to the bare title.
+      const response = await chrome.tabs.sendMessage(ytTab.id, { type: "GET_CHANNEL_NAME" });
+      if (response && response.channelName) {
+        payload.channel = response.channelName;
+      } else {
+        console.debug("Now Playing Reporter: content script responded but found no channel name", response);
+      }
+    } catch (err) {
+      // No content script listening in that tab -- fine, use bare title.
+      console.debug("Now Playing Reporter: could not reach content script", err.message);
+    }
+  }
 
   try {
     await fetch(SERVER_URL, {
@@ -44,7 +60,12 @@ async function reportNowPlaying() {
 }
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
-  if (Object.prototype.hasOwnProperty.call(changeInfo, "audible")) {
+  // "audible" catches play/pause; "title" catches same-tab track changes
+  // (e.g. YouTube autoplaying the next video) where audible never toggles.
+  if (
+    Object.prototype.hasOwnProperty.call(changeInfo, "audible") ||
+    Object.prototype.hasOwnProperty.call(changeInfo, "title")
+  ) {
     reportNowPlaying();
   }
 });

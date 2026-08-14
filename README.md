@@ -17,6 +17,38 @@ and a Chrome extension for YouTube.
 > repository's exact files have not been re-run end to end against a live
 > server. Smoke-test it against your own stream before relying on it.
 
+## Why this exists
+
+This is meant to sit alongside a Mixxx-based broadcast setup, where Mixxx is
+the only thing that ever connects to the Icecast server as the source
+client. Mixxx's own Live Broadcasting metadata push only knows about tracks
+loaded on its own Decks -- it has real ID3/track data for those. Audio that
+reaches Mixxx through an **Auxiliary** input (e.g. Spotify or a YouTube tab
+routed in through Voicemeeter) is just sound to Mixxx; it carries no
+title/artist information no matter what's actually playing:
+
+```
+Chrome (Spotify Web/desktop audio, YouTube tabs) --\
+                                                       --> Voicemeeter (per-app routing)
+other app audio ------------------------------------/         |
+                                                                v
+                                                  Voicemeeter outputs (B1 / B2 / B3)
+                                                                |
+                                                                v
+                                          Mixxx Auxiliary 1 / 2 / 3 inputs
+                                                                |
+                              (mixed alongside Mixxx's own native Decks)
+                                                                v
+                                                Mixxx Live Broadcasting -> Icecast
+```
+
+So whenever Spotify or YouTube (routed via Aux) is what's actually audible
+on air, Mixxx's own metadata push is stale -- it's reporting whatever was
+last loaded on a Deck, not what's really playing. This pipeline exists to
+cover that gap: it detects Spotify/YouTube directly and pushes metadata
+itself, unconditionally -- see "Known limitations" below for the tradeoff
+that comes with that.
+
 ## How it works
 
 Four pieces:
@@ -29,8 +61,10 @@ Four pieces:
    `now_playing.txt`.
 
 2. **`chrome-extension/`** -- a Manifest V3 extension that finds whichever
-   YouTube/YouTube Music tab is actually making sound and POSTs its title to
-   the local server above.
+   YouTube/YouTube Music tab is actually making sound and POSTs its title,
+   plus the channel name (read from the page by `content.js`, since the tab
+   title alone is often just the video title with no artist), to the local
+   server above.
 
 3. **`nowplaying_poller.py`** -- watches `now_playing.txt`, strips known
    YouTube tag noise (see `STRIP_PATTERNS`), and pushes changes to your
@@ -146,6 +180,14 @@ placeholders) is committed.
   `now_playing.py`'s HTTP server explicitly handles `OPTIONS` (in addition to
   `POST`) and returns `Access-Control-Allow-*` headers, or the browser
   silently blocks the real POST and no YouTube data ever arrives.
+- **YouTube video titles often don't include the artist.** A tab title like
+  `"Die Young - YouTube"` only tells you the video title, not who made it --
+  the artist frequently only appears as the channel name elsewhere on the
+  page. `content.js` reads that channel name from the DOM (a few known
+  selectors, first match wins) and `now_playing.py` combines it as
+  `"Channel - Title"`. YouTube's DOM isn't a stable API, so if a redesign
+  breaks all the selectors, this silently falls back to the bare video
+  title -- not a crash, just a quieter output.
 - **Audible tab, not focused tab.** The extension uses
   `chrome.tabs.query({ audible: true })` filtered to YouTube URLs -- not the
   active/focused tab. These are frequently different tabs (e.g. music
@@ -179,13 +221,27 @@ placeholders) is committed.
     (intentional; change `YOUTUBE_FRESH_SECONDS` / the priority logic in
     `now_playing.py` if you'd rather have Spotify win).
   - Windows only -- the Spotify detection is Win32-specific.
+  - **No Mixxx awareness -- pushes can race Mixxx's own metadata.** If
+    you're broadcasting through Mixxx (which pushes its own artist/title for
+    tracks loaded on its own Decks), this pipeline pushes unconditionally,
+    with no way to tell "a Mixxx Deck is dominant right now" (defer to
+    Mixxx) from "an Aux channel (Spotify/YouTube) is dominant" (this
+    pipeline should win instead). An earlier version tried standing down
+    entirely whenever Mixxx had an active broadcast connection, but on a
+    single-source setup where Mixxx is the *only* thing that ever connects
+    to Icecast, that stood the pipeline down 100% of the time it's actually
+    needed -- so it was removed. The tradeoff now runs the other way: real
+    Deck titles can get briefly overwritten by stale Spotify/YouTube data.
+    A correct fix needs real-time per-channel mixer state from Mixxx, which
+    isn't known to be exposed externally -- **not yet investigated.**
 
 ## Files
 
 - `now_playing.py` -- track detection + local HTTP server
 - `nowplaying_poller.py` -- pushes to Icecast, cleans titles, logs
-- `chrome-extension/manifest.json`, `chrome-extension/background.js` --
-  YouTube audible-tab reporter
+- `chrome-extension/manifest.json`, `chrome-extension/background.js`,
+  `chrome-extension/content.js` -- YouTube audible-tab + channel-name
+  reporter
 - `start_pipeline.bat` -- Windows launcher
 - `.env.example` -- config template (no real values)
 - `requirements.txt` -- pywin32, psutil, python-dotenv

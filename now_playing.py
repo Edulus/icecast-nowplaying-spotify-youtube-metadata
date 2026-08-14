@@ -26,6 +26,7 @@ YouTube detection:
 
 import json
 import os
+import re
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -51,12 +52,22 @@ SPOTIFY_PROCESS_NAME = "spotify.exe"
 # already excluded by the " - " requirement below; these are extra guards for
 # ad playback. NOTE: ad-title behaviour varies by Spotify client version and
 # was NOT verified against a live ad -- treat this list as best-effort.
-SPOTIFY_IGNORE_TITLES = {"spotify", "advertisement", "spotify free"}
+SPOTIFY_IGNORE_TITLES = {"spotify", "advertisement", "spotify free", "spotify premium"}
 
 # Shared state updated by the HTTP server thread, read by the main loop.
 _youtube_lock = threading.Lock()
 _youtube_title = None
+_youtube_channel = None
 _youtube_last_seen = 0.0
+
+# Chrome tab titles for YouTube carry more than the video title: an unread-
+# notification count like "(2) " prepended, and " - YouTube" /
+# " - YouTube Music" appended. Stripped here, before the channel name (from
+# the content script) gets prepended below -- otherwise they'd end up stuck
+# in the middle of the combined "Channel - Title" string instead of at an
+# edge where nowplaying_poller.py's own stripping could still catch them.
+_YT_NOTIFICATION_PREFIX_RE = re.compile(r"^\(\d+\)\s*")
+_YT_PLATFORM_SUFFIX_RE = re.compile(r"\s*[-–—]\s*YouTube(?:\s+Music)?\s*$", re.IGNORECASE)
 
 
 def _spotify_now_playing():
@@ -104,7 +115,7 @@ class _MetadataHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_POST(self):
-        global _youtube_title, _youtube_last_seen
+        global _youtube_title, _youtube_channel, _youtube_last_seen
 
         length = int(self.headers.get("Content-Length", 0))
         raw = self.rfile.read(length) if length else b"{}"
@@ -116,10 +127,12 @@ class _MetadataHandler(BaseHTTPRequestHandler):
         with _youtube_lock:
             if data.get("idle"):
                 _youtube_title = None
+                _youtube_channel = None
             else:
                 title = data.get("title")
                 if title:
                     _youtube_title = title
+                    _youtube_channel = data.get("channel")
                     _youtube_last_seen = time.time()
 
         self.send_response(200)
@@ -137,11 +150,21 @@ def _start_http_server():
     return server
 
 
-def _current_youtube_title():
+def _current_youtube_now_playing():
+    """Return 'Channel - Title' (or bare title if no channel) for the
+    current YouTube tab, or None if nothing fresh has been reported."""
     with _youtube_lock:
-        if _youtube_title and (time.time() - _youtube_last_seen) < YOUTUBE_FRESH_SECONDS:
-            return _youtube_title
-    return None
+        if not (_youtube_title and (time.time() - _youtube_last_seen) < YOUTUBE_FRESH_SECONDS):
+            return None
+        title = _youtube_title
+        channel = _youtube_channel
+
+    title = _YT_NOTIFICATION_PREFIX_RE.sub("", title)
+    title = _YT_PLATFORM_SUFFIX_RE.sub("", title).strip()
+
+    if channel and not title.lower().startswith(channel.lower()):
+        return f"{channel} - {title}"
+    return title
 
 
 def main():
@@ -150,7 +173,7 @@ def main():
 
     last_written = None
     while True:
-        title = _current_youtube_title() or _spotify_now_playing()
+        title = _current_youtube_now_playing() or _spotify_now_playing()
 
         if title != last_written:
             with open(NOWPLAYING_FILE, "w", encoding="utf-8") as f:
