@@ -256,6 +256,14 @@ def monitor_once(url, reporter):
                         SILENCE_THRESHOLD_DBFS,
                         DEAD_AIR_SECONDS,
                     )
+                    # Receiving decoded audio means the stream is online.
+                    # During the 30-second grace period we remain AUDIO OK;
+                    # only continuous quiet past the threshold becomes SILENCE.
+                    if reporter.current != "SILENCE":
+                        reporter.set(
+                            "AUDIO OK",
+                            "stream online; dead-air timer running",
+                        )
 
                 quiet_for = now - silence_started
                 if quiet_for >= DEAD_AIR_SECONDS:
