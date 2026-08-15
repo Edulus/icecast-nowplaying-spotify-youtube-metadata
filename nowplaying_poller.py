@@ -50,30 +50,26 @@ NOTIFICATION_PREFIX_RE = re.compile(r"^\(\d+\)\s*")
 # of the string so a song legitimately containing the word isn't mangled.
 PLATFORM_SUFFIX_RE = re.compile(r"\s*[-–—]\s*YouTube(?:\s+Music)?\s*$", re.IGNORECASE)
 
+# Any bracketed/parenthesized tag whose contents begin with "Official" is
+# metadata noise rather than part of the track title. This intentionally
+# catches variants we have not enumerated, e.g. (Official HD Video),
+# [Official 4K Video], etc., while leaving bare words such as "Official"
+# elsewhere in a legitimate title untouched.
+OFFICIAL_TAG_RE = re.compile(
+    r"\(\s*Official\b[^)]*\)|\[\s*Official\b[^\]]*\]",
+    re.IGNORECASE,
+)
+
 # Explicit bracketed/parenthesized tag forms only. Deliberately NOT doing
-# bare-word matching (e.g. stripping any word "Official" or "Video") because
-# that mangles real titles like "Video Games" or "Radio Edit". This list is
-# meant to be edited by whoever runs the pipeline -- add/remove patterns to
-# taste. Matching is case-insensitive; (Remix) and (feat. ...) are
-# intentionally NOT in this list since they're meaningful title content.
+# bare-word matching (e.g. stripping any word "Video") because that mangles
+# real titles like "Video Games" or "Radio Edit". This list is meant to be
+# edited by whoever runs the pipeline -- add/remove patterns to taste.
+# Matching is case-insensitive; (Remix) and (feat. ...) are intentionally NOT
+# in this list since they're meaningful title content.
 #
 # Note both "Visualiser" (British) and "Visualizer" (American) spellings are
 # present -- the British form does show up in real release titles.
 STRIP_PATTERNS = [
-    "(Official Audio)",
-    "(Official Video)",
-    "(Official Music Video)",
-    "[Official Audio]",
-    "[Official Video]",
-    "[Official Music Video]",
-    "(Official Live Video)",
-    "[Official Live Video]",
-    "(Official Lyric Video)",
-    "[Official Lyric Video]",
-    "(Official Visualiser)",
-    "[Official Visualiser]",
-    "(Official Visualizer)",
-    "[Official Visualizer]",
     "(Music Video)",
     "[Music Video]",
     "(Lyric Video)",
@@ -106,6 +102,7 @@ def clean_title(title):
 
     cleaned = NOTIFICATION_PREFIX_RE.sub("", title)
     cleaned = PLATFORM_SUFFIX_RE.sub("", cleaned)
+    cleaned = OFFICIAL_TAG_RE.sub("", cleaned)
 
     for pattern in STRIP_PATTERNS:
         # Case-insensitive literal replace.
