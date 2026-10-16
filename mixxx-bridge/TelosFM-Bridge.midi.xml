@@ -3,7 +3,7 @@
     <info>
         <name>TelosFM Bridge</name>
         <author>TelosFM</author>
-        <description>Not a hardware controller. Reports Aux PLAY buttons, Aux/deck volumes, deck play state and the crossfader over a loopMIDI port so now_playing.py knows which sources are actually on air. Load it on the "TelosFM Bridge" loopMIDI port.</description>
+        <description>Not a hardware controller. Reports Aux PLAY buttons, Aux/deck volumes, deck play state and the crossfader over a loopMIDI port so now_playing.py knows which sources are actually on air, and switches Live Broadcasting and Auto DJ on 30 s after Mixxx starts. Load it on the "TelosFM Bridge" loopMIDI port.</description>
     </info>
     <controller id="TelosFM Bridge">
         <scriptfiles>

@@ -47,14 +47,31 @@ TelosFMBridge.sendAll = function () {
     TelosFMBridge.send(127, 127);
 };
 
+// Puts the station on air once Mixxx has had time to load the library. These
+// set the controls to on rather than toggling them, so running it again is
+// harmless, and it needs no keyboard focus (station_watchdog.ps1 used to send
+// Ctrl+L and Shift+F12, which got lost when another window kept focus).
+TelosFMBridge.GO_LIVE_DELAY_MS = 30000;
+
+TelosFMBridge.goLive = function () {
+    TelosFMBridge.goLiveTimer = 0;
+    engine.setValue("[Shoutcast]", "enabled", 1);
+    engine.setValue("[AutoDJ]", "enabled", 1);
+};
+
 TelosFMBridge.init = function (id, debugging) {
     TelosFMBridge.sendAll();
     TelosFMBridge.timer = engine.beginTimer(TelosFMBridge.SEND_INTERVAL_MS, TelosFMBridge.sendAll);
+    TelosFMBridge.goLiveTimer = engine.beginTimer(TelosFMBridge.GO_LIVE_DELAY_MS, TelosFMBridge.goLive, true);
 };
 
 TelosFMBridge.shutdown = function () {
     if (TelosFMBridge.timer) {
         engine.stopTimer(TelosFMBridge.timer);
         TelosFMBridge.timer = 0;
+    }
+    if (TelosFMBridge.goLiveTimer) {
+        engine.stopTimer(TelosFMBridge.goLiveTimer);
+        TelosFMBridge.goLiveTimer = 0;
     }
 };
