@@ -70,14 +70,47 @@ Four pieces:
    YouTube tag noise (see `STRIP_PATTERNS`), and pushes changes to your
    Icecast server's metadata endpoint.
 
-4. **`start_pipeline.bat`** -- launches both Python scripts in their own
-   console windows after checking Python is on PATH and `.env` exists.
+4. **`dead_air_monitor.py`** -- reports `AUDIO OK` / `SILENCE` /
+   `STREAM OFFLINE` / `LEVEL UNAVAILABLE`. Silence comes from Voicemeeter's
+   meter on the strip Mixxx's Main output plays into (pre-fader, so it tracks
+   the master mix Mixxx broadcasts); stream presence comes from the
+   Caster.fm server's public stats. It doesn't decode the listener stream
+   because Caster.fm's free plan only serves that with a per-IP token issued
+   to its embedded players. Doesn't feed into the metadata path above.
+
+5. **`TelosFM_Broadcasting_Scripts.bat`** -- launches all of the above,
+   plus `dashboard.py`, each in their own console window, after checking
+   Python is on PATH and `.env` exists.
 
 ```
 Spotify (hidden window) --\
                             +--> now_playing.py --> now_playing.txt --> nowplaying_poller.py --> Icecast
 Chrome extension (audible tab, HTTP POST) --/
+
+Mixxx Main -> Voicemeeter AUX strip meter --\
+                                              +--> dead_air_monitor.py (independent)
+Caster.fm public stats (/status-json.xsl) ---/
 ```
+
+## Live status dashboard
+
+`dashboard.py` serves a single local status page at
+**`http://127.0.0.1:8766/`** showing the live state of all three monitoring
+scripts -- current now-playing source/title, the poller's last push result,
+the dead-air monitor's state plus a live dBFS meter, and Caster.fm listener
+stats with a link to the Caster.fm dashboard.
+
+It's read-only and decoupled from the pipeline: `now_playing.py`,
+`nowplaying_poller.py`, and `dead_air_monitor.py` each write a small JSON
+status file after every check (via the shared `status_writer.py` helper);
+`dashboard.py` just polls those files and serves them as a page that
+auto-refreshes every 2 seconds. Starting, stopping, or crashing the
+dashboard has no effect on metadata pushes or dead-air detection -- and if a
+script's status file goes stale (no update for 15+ seconds), the dashboard
+shows it as "Not running" rather than silently going quiet.
+
+`TelosFM_Broadcasting_Scripts.bat` starts it automatically and opens it in
+your browser. To run it separately: `python dashboard.py`.
 
 ## Setup
 
@@ -90,8 +123,38 @@ Chrome extension (audible tab, HTTP POST) --/
    providers do).
 4. Load the extension: open `chrome://extensions`, enable Developer Mode,
    "Load unpacked", select the `chrome-extension/` folder.
-5. Run `start_pipeline.bat` (or run `now_playing.py` and
-   `nowplaying_poller.py` yourself in two terminals).
+5. Run `TelosFM_Broadcasting_Scripts.bat` (or run `now_playing.py`,
+   `nowplaying_poller.py`, `dead_air_monitor.py`, and `dashboard.py`
+   yourself in separate terminals).
+
+## Mixxx bridge (Aux PLAY check)
+
+Spotify and YouTube titles should only go on air when their audio does.
+Mixxx has no external API for its mixer, so a small controller mapping in
+`mixxx-bridge/` reports each Aux channel's PLAY button, faders, deck play
+state and the crossfader over a virtual MIDI port. `now_playing.py` reads it
+(`mixxx_bridge.py`) and only passes a Spotify/YouTube title on while that
+source's Aux (`SPOTIFY_AUX` / `YOUTUBE_AUX` in `.env`, default 1 and 2) is
+feeding the main mix. Without the bridge, titles are sent unchecked and the
+dashboard says so.
+
+When a Spotify/YouTube title is on air and that source goes off air,
+`nowplaying_poller.py` sends the current Mixxx deck title once (read from
+Mixxx's window title via `mixxx_window.py`, in the same `"$title" by $artist`
+format as Mixxx's broadcast profile). Otherwise the stale title would stay
+up until Mixxx's next track change.
+
+One-time setup:
+
+1. Install [loopMIDI](https://www.tobias-erichsen.de/software/loopmidi.html),
+   add a port named exactly `TelosFM Bridge`, and let loopMIDI start with
+   Windows.
+2. Copy `mixxx-bridge/TelosFM-Bridge.midi.xml` and
+   `mixxx-bridge/TelosFM-Bridge.js` into `%LOCALAPPDATA%\Mixxx\controllers\`.
+3. Restart Mixxx. In Preferences → Controllers, select **TelosFM Bridge**,
+   load the **TelosFM Bridge** mapping, tick **Enabled**, and apply.
+4. Restart `now_playing.py`. The dashboard's "Aux PLAY" row shows each Aux
+   as on air or off once the bridge is connected.
 
 ## Icecast metadata endpoint and auth
 
@@ -239,10 +302,20 @@ placeholders) is committed.
 
 - `now_playing.py` -- track detection + local HTTP server
 - `nowplaying_poller.py` -- pushes to Icecast, cleans titles, logs
+- `dead_air_monitor.py` -- Voicemeeter level meter + Caster.fm stats;
+  reports AUDIO OK / SILENCE / STREAM OFFLINE / LEVEL UNAVAILABLE
+- `caster_stats.py` -- shared reader for the Caster.fm/Icecast public stats
+- `mixxx_bridge.py`, `mixxx-bridge/` -- Mixxx controller mapping + MIDI reader
+  that tells `now_playing.py` which Aux channels are on air
+- `mixxx_window.py` -- reads Mixxx's now-playing deck track from its window title
 - `chrome-extension/manifest.json`, `chrome-extension/background.js`,
   `chrome-extension/content.js` -- YouTube audible-tab + channel-name
   reporter
-- `start_pipeline.bat` -- Windows launcher
+- `status_writer.py` -- shared helper the three scripts above use to publish
+  their current state as JSON, for `dashboard.py` to read
+- `dashboard.py`, `dashboard.html` -- local live-status page at
+  `http://127.0.0.1:8766/` (see "Live status dashboard" below)
+- `TelosFM_Broadcasting_Scripts.bat` -- Windows launcher for all four scripts
 - `.env.example` -- config template (no real values)
 - `requirements.txt` -- pywin32, psutil, python-dotenv
 

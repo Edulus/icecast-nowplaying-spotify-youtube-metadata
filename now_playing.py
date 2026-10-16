@@ -22,6 +22,20 @@ YouTube detection:
     "fresh" for YOUTUBE_FRESH_SECONDS; if fresh, YouTube wins over Spotify
     (since YouTube in a browser is usually a deliberate, active choice).
     Otherwise we fall back to whatever Spotify reports.
+
+Aux on-air check:
+    Spotify and YouTube reach the broadcast through fixed Mixxx Aux inputs
+    (SPOTIFY_AUX / YOUTUBE_AUX). A source's title is only written when its
+    Aux is feeding the main mix -- PLAY on, fader up, not crossfaded out --
+    as reported by the TelosFM Bridge mapping over MIDI (mixxx_bridge.py).
+    If the bridge isn't connected, titles are written unchecked as before.
+
+Mixxx deck detection (dashboard only):
+    Mixxx sends its own deck titles to Icecast, so they are never written to
+    NOWPLAYING_FILE. For the dashboard, the deck track is read from Mixxx's
+    main window title ("Artist - Title | Mixxx"; see mixxx_window.py), which follows the same
+    now-playing deck Mixxx uses for its broadcast metadata. (The library
+    database's last_played_at was tried first but lags by minutes.)
 """
 
 import json
@@ -31,22 +45,32 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-import psutil
 import win32con
 import win32gui
 import win32process
 from dotenv import load_dotenv
 
+from mixxx_bridge import MixxxBridge
+from mixxx_window import MIXXX_PROCESS_NAME, mixxx_deck_title, running_pids
+from status_writer import write_status
+
 load_dotenv()
 
 NOWPLAYING_FILE = os.getenv("NOWPLAYING_FILE", "now_playing.txt")
 POLL_INTERVAL = float(os.getenv("POLL_INTERVAL", "5"))
+STATUS_FILE = os.getenv("NOW_PLAYING_STATUS_FILE", "now_playing_status.json")
 
 HTTP_HOST = "127.0.0.1"
 HTTP_PORT = 8765
 YOUTUBE_FRESH_SECONDS = 90
 
 SPOTIFY_PROCESS_NAME = "spotify.exe"
+
+# Fixed routing policy: which Mixxx Aux input each source plays through. A
+# source's title is only sent while that Aux is feeding the broadcast
+# (checked through the TelosFM Bridge mapping; see mixxx_bridge.py).
+SPOTIFY_AUX = int(os.getenv("SPOTIFY_AUX", "1"))
+YOUTUBE_AUX = int(os.getenv("YOUTUBE_AUX", "2"))
 
 # Window titles that are never a real track. The bare app name "Spotify" is
 # already excluded by the " - " requirement below; these are extra guards for
@@ -59,6 +83,7 @@ _youtube_lock = threading.Lock()
 _youtube_title = None
 _youtube_channel = None
 _youtube_last_seen = 0.0
+_youtube_last_contact = 0.0  # any POST from the extension, idle or not
 
 # Chrome tab titles for YouTube carry more than the video title: an unread-
 # notification count like "(2) " prepended, and " - YouTube" /
@@ -69,13 +94,24 @@ _youtube_last_seen = 0.0
 _YT_NOTIFICATION_PREFIX_RE = re.compile(r"^\(\d+\)\s*")
 _YT_PLATFORM_SUFFIX_RE = re.compile(r"\s*[-–—]\s*YouTube(?:\s+Music)?\s*$", re.IGNORECASE)
 
+# YouTube auto-generates a channel named "<Artist> - Topic" for music that
+# has no official artist channel, which would otherwise combine into
+# "<Artist> - Topic - <Track>" on air. Add more channel-name noise here as
+# it turns up.
+_YOUTUBE_CHANNEL_STRIP_SUFFIXES = [" - Topic"]
 
-def _spotify_now_playing():
+
+def _clean_youtube_channel(channel):
+    if not channel:
+        return channel
+    for suffix in _YOUTUBE_CHANNEL_STRIP_SUFFIXES:
+        if channel.lower().endswith(suffix.lower()):
+            channel = channel[: -len(suffix)]
+    return channel.strip()
+
+
+def _spotify_now_playing(spotify_pids):
     """Return 'Artist - Track' from Spotify's hidden window, or None."""
-    spotify_pids = {
-        p.pid for p in psutil.process_iter(["name"])
-        if (p.info["name"] or "").lower() == SPOTIFY_PROCESS_NAME
-    }
     if not spotify_pids:
         return None
 
@@ -115,7 +151,7 @@ class _MetadataHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_POST(self):
-        global _youtube_title, _youtube_channel, _youtube_last_seen
+        global _youtube_title, _youtube_channel, _youtube_last_seen, _youtube_last_contact
 
         length = int(self.headers.get("Content-Length", 0))
         raw = self.rfile.read(length) if length else b"{}"
@@ -125,6 +161,7 @@ class _MetadataHandler(BaseHTTPRequestHandler):
             data = {}
 
         with _youtube_lock:
+            _youtube_last_contact = time.time()
             if data.get("idle"):
                 _youtube_title = None
                 _youtube_channel = None
@@ -161,19 +198,83 @@ def _current_youtube_now_playing():
 
     title = _YT_NOTIFICATION_PREFIX_RE.sub("", title)
     title = _YT_PLATFORM_SUFFIX_RE.sub("", title).strip()
+    channel = _clean_youtube_channel(channel)
 
     if channel and not title.lower().startswith(channel.lower()):
         return f"{channel} - {title}"
     return title
 
 
+def _youtube_state(youtube_title):
+    """playing / idle (extension reports no audible tab) / no_report."""
+    if youtube_title:
+        return "playing"
+    with _youtube_lock:
+        last_contact = _youtube_last_contact
+    # The extension reports while Chrome runs; a long gap means Chrome is
+    # closed or the extension is disabled.
+    if last_contact and time.time() - last_contact < YOUTUBE_FRESH_SECONDS:
+        return "idle"
+    return "no_report"
+
+
+def _source_status(state, title, aux_number, bridge, bridge_connected):
+    """Per-source status, including whether its Aux channel is on air."""
+    status = {"state": state, "title": title, "aux": aux_number}
+    if bridge_connected:
+        aux = bridge.aux(aux_number)
+        status["on_air"] = aux["live"]
+        status["off_air_reason"] = aux["reason"]
+    else:
+        # Without the bridge there's no way to check the Aux PLAY button, so
+        # a playing source is assumed on air (the pre-bridge behaviour).
+        status["on_air"] = None
+    return status
+
+
 def main():
     _start_http_server()
     print(f"Listening for YouTube updates on http://{HTTP_HOST}:{HTTP_PORT}")
 
-    last_written = None
+    bridge = MixxxBridge()
+    bridge.start()
+    print(
+        f"Mixxx bridge: listening on MIDI port {bridge.port_name!r} "
+        f"(Spotify = Aux {SPOTIFY_AUX}, YouTube = Aux {YOUTUBE_AUX})"
+    )
+
+    # Sentinel rather than None so the first pass always writes the file,
+    # clearing any title left over from a previous run.
+    last_written = object()
+    last_bridge_connected = None
     while True:
-        title = _current_youtube_now_playing() or _spotify_now_playing()
+        spotify_pids = running_pids(SPOTIFY_PROCESS_NAME)
+        spotify_title = _spotify_now_playing(spotify_pids)
+        youtube_title = _current_youtube_now_playing()
+
+        bridge_connected = bridge.connected()
+        if bridge_connected != last_bridge_connected:
+            print("Mixxx bridge connected." if bridge_connected else
+                  "Mixxx bridge not connected; titles are sent without checking Aux PLAY.")
+            last_bridge_connected = bridge_connected
+
+        if spotify_title:
+            spotify_state = "playing"
+        else:
+            spotify_state = "idle" if spotify_pids else "not_running"
+        spotify = _source_status(spotify_state, spotify_title, SPOTIFY_AUX, bridge, bridge_connected)
+        youtube = _source_status(
+            _youtube_state(youtube_title), youtube_title, YOUTUBE_AUX, bridge, bridge_connected
+        )
+
+        # Only a source whose Aux is actually feeding the broadcast gets its
+        # title sent. YouTube still wins when both are on air.
+        if youtube_title and youtube["on_air"] is not False:
+            title, source = youtube_title, "YouTube"
+        elif spotify_title and spotify["on_air"] is not False:
+            title, source = spotify_title, "Spotify"
+        else:
+            title, source = None, None
 
         if title != last_written:
             with open(NOWPLAYING_FILE, "w", encoding="utf-8") as f:
@@ -181,6 +282,26 @@ def main():
             last_written = title
             print(f"Now playing: {title!r}")
 
+        mixxx = {"state": "not_running"}
+        mixxx_pids = running_pids(MIXXX_PROCESS_NAME)
+        if mixxx_pids:
+            mixxx = {"state": "running", "title": mixxx_deck_title(mixxx_pids)}
+        mixxx["bridge"] = {
+            "connected": bridge_connected,
+            "port_found": bridge_connected or bridge.port_found(),
+            "port_name": bridge.port_name,
+            "aux": [bridge.aux(n) for n in range(1, 5)] if bridge_connected else None,
+            "decks": [bridge.deck(n) for n in range(1, 5)] if bridge_connected else None,
+        }
+
+        write_status(
+            STATUS_FILE,
+            source=source,
+            title=title,
+            spotify=spotify,
+            youtube=youtube,
+            mixxx=mixxx,
+        )
         time.sleep(POLL_INTERVAL)
 
 
