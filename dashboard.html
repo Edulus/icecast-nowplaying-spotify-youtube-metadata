@@ -1,0 +1,905 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TelosFM Dashboard</title>
+<style>
+  :root {
+    color-scheme: light;
+    --page:      #f2f1ed;
+    --page-2:    #e8e6e0;
+    --surface:   #fffffe;
+    --ink:       #14130f;
+    --ink-2:     #514f48;
+    --muted:     #8a887f;
+    --border:    rgba(20,19,15,0.09);
+    --accent:    #1f6feb;
+    --good:      #12922f;
+    --good-bg:   rgba(18,146,47,0.10);
+    --warning:   #b7791f;
+    --warning-bg:rgba(250,178,25,0.16);
+    --critical:  #cc3b3b;
+    --critical-bg:rgba(204,59,59,0.10);
+    --neutral-bg:rgba(20,19,15,0.06);
+    --meter-track: #e1dfd7;
+    --shadow:    0 1px 2px rgba(20,19,15,0.05), 0 8px 24px -12px rgba(20,19,15,0.22);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      color-scheme: dark;
+      --page:      #0c0c0b;
+      --page-2:    #141413;
+      --surface:   #1a1a18;
+      --ink:       #f7f6f3;
+      --ink-2:     #b9b7ad;
+      --muted:     #84827a;
+      --border:    rgba(255,255,255,0.09);
+      --accent:    #5b9dff;
+      --good:      #3fbf5c;
+      --good-bg:   rgba(63,191,92,0.14);
+      --warning:   #e0a230;
+      --warning-bg:rgba(224,162,48,0.16);
+      --critical:  #f06a6a;
+      --critical-bg:rgba(240,106,106,0.14);
+      --neutral-bg:rgba(255,255,255,0.07);
+      --meter-track: #2e2e2b;
+      --shadow:    0 1px 2px rgba(0,0,0,0.5), 0 10px 28px -14px rgba(0,0,0,0.8);
+    }
+  }
+
+  /* Registered so they can be transitioned; renderDeadAir sets them from the
+     live dBFS reading (red at silence, amber low, green healthy, amber hot,
+     red clipping). */
+  @property --level-a {
+    syntax: "<color>"; inherits: true; initial-value: #22221f;
+  }
+  @property --level-b {
+    syntax: "<color>"; inherits: true; initial-value: #171715;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 28px 20px 56px;
+    background: #1b1b19;  /* behind the wash, so nothing pale shows through */
+    /* Both gradient colours are registered custom properties (see @property
+       below), so a change of audio level cross-fades instead of jumping. */
+    transition: --level-a 1.4s ease, --level-b 1.4s ease;
+    min-height: 100vh;
+    color: var(--ink);
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  /* Full-page animated wash behind everything. The two colours come from the
+     audio level; the drift keeps it gently moving. */
+  .level-bg {
+    position: fixed;
+    inset: -25%;
+    z-index: -1;
+    pointer-events: none;
+    /* A repeating 135deg band (top-left -> bottom-right) plus softer bands at
+       a slightly different period, so the wash keeps flowing without the two
+       layers ever lining up into a visible seam. */
+    background:
+      repeating-linear-gradient(135deg,
+        transparent 0px,
+        color-mix(in srgb, var(--level-b) 60%, transparent) 300px,
+        transparent 600px),
+      repeating-linear-gradient(135deg,
+        var(--level-a) 0px, var(--level-b) 420px, var(--level-a) 840px);
+    animation: flow 20s linear infinite;
+  }
+  /* Each layer shifts by exactly one of its own periods (period / sqrt(2) in
+     x and y), so the loop restarts seamlessly. The layers have different
+     periods, so they drift at different speeds and never line up. */
+  @keyframes flow {
+    from { background-position: 0 0, 0 0; }
+    to   { background-position: 424px 424px, 594px 594px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .level-bg { animation: none; }
+  }
+  .page-head {
+    max-width: 1240px;
+    margin: 0 auto 22px;
+    display: flex;
+    align-items: baseline;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  /* The header sits on the dark wash rather than on a card, so it is light in
+     both themes. */
+  h1 {
+    font-size: 21px;
+    font-weight: 650;
+    letter-spacing: -0.015em;
+    margin: 0;
+    color: #f6f5f1;
+  }
+  .subtitle {
+    color: rgba(246,245,241,0.72);
+    font-size: 12.5px;
+    margin: 0;
+  }
+  /* Manual override bar: sits on the wash with the header, above the cards. */
+  .override-bar {
+    max-width: 1240px;
+    margin: 0 auto 18px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    padding: 12px 14px;
+    border-radius: 12px;
+    background: rgba(255,255,255,0.10);
+    border: 1px solid rgba(255,255,255,0.16);
+    backdrop-filter: blur(6px);
+  }
+  .override-bar.is-active {
+    background: rgba(255,255,255,0.16);
+    border-color: rgba(255,255,255,0.34);
+  }
+  .override-bar label {
+    font-size: 10.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: rgba(246,245,241,0.75);
+  }
+  .override-bar input {
+    flex: 1 1 260px;
+    min-width: 0;
+    font: inherit;
+    font-size: 13px;
+    color: var(--ink);
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 8px 10px;
+  }
+  .override-bar button {
+    font: inherit;
+    font-size: 12.5px;
+    font-weight: 620;
+    border-radius: 8px;
+    padding: 8px 14px;
+    cursor: pointer;
+    border: 1px solid transparent;
+    background: var(--surface);
+    color: var(--ink);
+  }
+  .override-bar button:hover { opacity: 0.85; }
+  #override-clear {
+    background: transparent;
+    color: #f6f5f1;
+    border-color: rgba(255,255,255,0.4);
+  }
+  .override-state {
+    font-size: 12px;
+    color: rgba(246,245,241,0.82);
+    flex-basis: 100%;
+  }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 18px;
+    max-width: 1240px;
+    margin: 0 auto;
+  }
+  .card {
+    position: relative;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 18px 20px 20px;
+    box-shadow: var(--shadow);
+    overflow: hidden;
+    /* Column layout so the "Updated" line can sit on the card's floor,
+       lining up across all four cards however tall their content is. */
+    display: flex;
+    flex-direction: column;
+  }
+  /* Accent hairline along the top, tinted by the card's status. */
+  .card::before {
+    content: "";
+    position: absolute;
+    inset: 0 0 auto;
+    height: 3px;
+    background: var(--muted);
+    opacity: 0.55;
+  }
+  .card.is-good::before { background: var(--good); opacity: 1; }
+  .card.is-warning::before { background: var(--warning); opacity: 1; }
+  .card.is-critical::before { background: var(--critical); opacity: 1; }
+  .card-label {
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--muted);
+    margin: 0 0 12px;
+  }
+  .status-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 10px;
+  }
+  .dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex: none;
+    background: var(--muted);
+  }
+  .dot.good { background: var(--good); box-shadow: 0 0 0 3px var(--good-bg); }
+  .dot.warning { background: var(--warning); box-shadow: 0 0 0 3px var(--warning-bg); }
+  .dot.critical { background: var(--critical); box-shadow: 0 0 0 3px var(--critical-bg); }
+  .state-text {
+    font-size: 13px;
+    font-weight: 650;
+    letter-spacing: 0.01em;
+    padding: 3px 9px;
+    border-radius: 999px;
+    background: var(--neutral-bg);
+    color: var(--ink-2);
+  }
+  .state-text.good { background: var(--good-bg); color: var(--good); }
+  .state-text.warning { background: var(--warning-bg); color: var(--warning); }
+  .state-text.critical { background: var(--critical-bg); color: var(--critical); }
+  .value {
+    font-size: 15.5px;
+    line-height: 1.35;
+    font-weight: 550;
+    color: var(--ink);
+    margin: 0 0 6px;
+    word-break: break-word;
+  }
+  .detail {
+    font-size: 12.5px;
+    line-height: 1.45;
+    color: var(--ink-2);
+    margin: 0 0 4px;
+  }
+  .updated {
+    font-size: 11.5px;
+    color: var(--muted);
+    margin: 14px 0 0;
+    padding-top: 10px;
+    border-top: 1px solid var(--border);
+    margin-top: auto;  /* pin to the bottom of the card */
+  }
+  .stats {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px 12px;
+    margin: 14px 0 0;
+    padding: 12px 14px;
+    background: var(--neutral-bg);
+    border-radius: 10px;
+  }
+  .stats dt {
+    font-size: 10.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--muted);
+  }
+  .stats dd {
+    font-size: 17px;
+    font-weight: 620;
+    margin: 2px 0 0;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.01em;
+  }
+  .history {
+    margin: 14px 0 0;
+    padding: 0;
+    list-style: none;
+  }
+  .history-label {
+    font-size: 10.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--muted);
+    margin: 14px 0 6px;
+  }
+  .history li {
+    font-size: 12.5px;
+    color: var(--ink-2);
+    padding: 5px 0;
+    border-top: 1px solid var(--border);
+    display: flex;
+    gap: 8px;
+  }
+  .history li::before {
+    content: "";
+    width: 4px;
+    height: 4px;
+    margin-top: 6px;
+    border-radius: 50%;
+    background: var(--muted);
+    flex: none;
+    opacity: 0.6;
+  }
+  .sources {
+    margin: 14px 0 0;
+    display: grid;
+    gap: 0;
+  }
+  .sources div {
+    display: grid;
+    grid-template-columns: 82px 1fr;
+    gap: 10px;
+    align-items: baseline;
+    padding: 7px 0;
+    border-top: 1px solid var(--border);
+  }
+  .sources dt {
+    font-size: 10.5px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--muted);
+  }
+  .sources dd {
+    font-size: 12.5px;
+    line-height: 1.4;
+    color: var(--ink);
+    margin: 0;
+    word-break: break-word;
+  }
+  .sources dd.inactive { color: var(--muted); }
+  .footnote {
+    font-size: 11.5px;
+    color: var(--muted);
+    margin: 14px 0 0;
+    line-height: 1.45;
+  }
+  .open-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 16px;
+    font-size: 12.5px;
+    font-weight: 600;
+    color: var(--surface);
+    background: var(--ink);
+    text-decoration: none;
+    border-radius: 8px;
+    padding: 8px 12px;
+    transition: opacity 0.15s ease;
+  }
+  .open-link:hover { opacity: 0.85; }
+  .meter-track {
+    width: 100%;
+    height: 10px;
+    border-radius: 999px;
+    background: var(--meter-track);
+    overflow: hidden;
+    margin-top: 14px;
+  }
+  .meter-fill {
+    height: 100%;
+    border-radius: 999px;
+    background: var(--good);
+    width: 0%;
+    transition: width 0.25s ease, background 0.25s ease;
+  }
+  .meter-label {
+    display: flex;
+    justify-content: space-between;
+    font-size: 11px;
+    color: var(--muted);
+    margin-top: 6px;
+    font-variant-numeric: tabular-nums;
+  }
+  #meter-value-dead-air { font-weight: 650; color: var(--ink-2); }
+</style>
+</head>
+<body>
+  <div class="level-bg" aria-hidden="true"></div>
+  <header class="page-head">
+    <h1>TelosFM Dashboard</h1>
+    <p class="subtitle" id="page-subtitle">now_playing.py &middot; nowplaying_poller.py &middot; dead_air_monitor.py &middot; Caster.fm</p>
+  </header>
+
+  <form class="override-bar" id="override-form" autocomplete="off">
+    <label for="override-input">Manual title</label>
+    <input id="override-input" type="text" maxlength="200"
+           placeholder="Type a title to put on air, e.g. Live from the studio">
+    <button type="submit" id="override-set">Set</button>
+    <button type="button" id="override-clear" hidden>Clear</button>
+    <span class="override-state" id="override-state"></span>
+  </form>
+
+  <div class="grid">
+    <div class="card" id="card-now-playing">
+      <p class="card-label">Now Playing</p>
+      <div class="status-row"><span class="dot" id="dot-now-playing"></span><span class="state-text" id="state-now-playing">&mdash;</span></div>
+      <p class="value" id="value-now-playing"></p>
+      <dl class="sources">
+        <div><dt>Mixxx decks</dt><dd id="src-mixxx">&mdash;</dd></div>
+        <div><dt>Spotify</dt><dd id="src-spotify">&mdash;</dd></div>
+        <div><dt>YouTube</dt><dd id="src-youtube">&mdash;</dd></div>
+        <div><dt>Aux PLAY</dt><dd id="src-aux">&mdash;</dd></div>
+        <div><dt>Other Aux</dt><dd>Titles can't be detected</dd></div>
+      </dl>
+      <p class="footnote">Mixxx sends deck titles to Caster.fm itself. A Spotify or YouTube title is handed to the Metadata Poller only while its Aux channel is on air (YouTube wins if both are).</p>
+      <p class="updated" id="updated-now-playing"></p>
+    </div>
+
+    <div class="card" id="card-poller">
+      <p class="card-label">Metadata Poller</p>
+      <div class="status-row"><span class="dot" id="dot-poller"></span><span class="state-text" id="state-poller">&mdash;</span></div>
+      <p class="value" id="value-poller"></p>
+      <p class="detail" id="detail-poller"></p>
+      <p class="detail" id="onair-poller"></p>
+      <p class="footnote">Sends Spotify and YouTube titles to Caster.fm, since Mixxx can't see what plays on its Aux inputs. When they go off air, it sends the current Mixxx deck title once so their title doesn't linger.</p>
+      <p class="updated" id="updated-poller"></p>
+    </div>
+
+    <div class="card" id="card-dead-air">
+      <p class="card-label">Dead Air Monitor</p>
+      <div class="status-row"><span class="dot" id="dot-dead-air"></span><span class="state-text" id="state-dead-air">&mdash;</span></div>
+      <p class="detail" id="detail-dead-air"></p>
+      <div class="meter-track"><div class="meter-fill" id="meter-dead-air"></div></div>
+      <div class="meter-label"><span id="meter-value-dead-air">&nbsp;</span><span>scale &minus;60 to 0 dBFS</span></div>
+      <p class="updated" id="updated-dead-air"></p>
+    </div>
+
+    <div class="card" id="card-caster">
+      <p class="card-label">Caster.fm</p>
+      <div class="status-row"><span class="dot" id="dot-caster"></span><span class="state-text" id="state-caster">&mdash;</span></div>
+      <p class="value" id="value-caster"></p>
+      <p class="detail" id="detail-caster"></p>
+      <dl class="stats">
+        <div><dt>Listeners</dt><dd id="listeners-caster">&mdash;</dd></div>
+        <div><dt>Peak today</dt><dd id="peak-caster">&mdash;</dd></div>
+        <div><dt>Bitrate</dt><dd id="bitrate-caster">&mdash;</dd></div>
+        <div><dt>On air for</dt><dd id="uptime-caster">&mdash;</dd></div>
+        <div><dt>Server up</dt><dd id="serverup-caster">&mdash;</dd></div>
+        <div><dt>Format</dt><dd id="format-caster">&mdash;</dd></div>
+      </dl>
+      <p class="history-label" id="history-label-caster" hidden>Recently on air</p>
+      <ul class="history" id="history-caster"></ul>
+      <a class="open-link" href="https://cloud.caster.fm/" target="_blank" rel="noopener">Open Caster.fm dashboard &#8599;</a>
+      <p class="updated" id="updated-caster"></p>
+    </div>
+  </div>
+
+<script>
+const POLL_MS = 2000;
+const METER_FLOOR_DBFS = -60; // matches SILENCE_THRESHOLD_DBFS default
+
+function timeAgo(epochSeconds) {
+  if (!epochSeconds) return "never";
+  const seconds = Math.max(0, Math.round(Date.now() / 1000 - epochSeconds));
+  if (seconds < 2) return "just now";
+  if (seconds < 60) return seconds + "s ago";
+  const minutes = Math.round(seconds / 60);
+  return minutes + "m ago";
+}
+
+// One call sets the card's dot, its status pill and its top accent line.
+function setDot(id, level) {
+  const dot = document.getElementById(id);
+  dot.className = "dot" + (level ? " " + level : "");
+  const state = document.getElementById(id.replace("dot-", "state-"));
+  if (state) state.className = "state-text" + (level ? " " + level : "");
+  const card = dot.closest(".card");
+  if (card) card.className = "card" + (level ? " is-" + level : "");
+}
+
+function setSource(id, text, active) {
+  const el = document.getElementById(id);
+  el.textContent = text;
+  el.className = active ? "" : "inactive";
+}
+
+// Playing, but its Aux channel isn't feeding the broadcast.
+function heldBack(src) {
+  return src.state === "playing" && src.on_air === false;
+}
+
+function onAirTitle(caster) {
+  return caster && caster.state === "on_air" ? (caster.title || "") : "";
+}
+
+function renderNowPlaying(data, caster) {
+  const stateEl = document.getElementById("state-now-playing");
+  const valueEl = document.getElementById("value-now-playing");
+  const updatedEl = document.getElementById("updated-now-playing");
+  const onAir = onAirTitle(caster);
+
+  if (data.stale) {
+    setDot("dot-now-playing", "critical");
+    stateEl.textContent = "Not running";
+    valueEl.textContent = "Start now_playing.py to see Spotify, YouTube and Mixxx sources.";
+    ["src-mixxx", "src-aux", "src-spotify", "src-youtube"].forEach(id => setSource(id, "—", false));
+    updatedEl.textContent = "Updated " + timeAgo(data.updated_at);
+    return;
+  }
+
+  // Mixxx decks
+  const mixxx = data.mixxx || {};
+  const deckLine = mixxx.title || "";
+  if (mixxx.state === "not_running") {
+    setSource("src-mixxx", "Mixxx isn't open", false);
+  } else if (deckLine) {
+    setSource("src-mixxx", deckLine, true);
+  } else if (mixxx.state === "running") {
+    setSource("src-mixxx", "Open, no deck playing", false);
+  } else {
+    setSource("src-mixxx", "Unknown (restart now_playing.py)", false);
+  }
+
+  // Aux PLAY states, via the TelosFM Bridge mapping in Mixxx.
+  const bridge = mixxx.bridge || {};
+  if (bridge.connected && bridge.aux) {
+    setSource("src-aux", bridge.aux.map((a, i) => "Aux " + (i + 1) + (a.live ? " on air" : " off")).join(" · "), true);
+  } else if (mixxx.state === "not_running") {
+    setSource("src-aux", "—", false);
+  } else if (bridge.port_found) {
+    setSource("src-aux", "Bridge not connected: enable the \"TelosFM Bridge\" mapping in Mixxx → Preferences → Controllers", false);
+  } else if (mixxx.bridge) {
+    setSource("src-aux", "Bridge not set up: loopMIDI port \"" + bridge.port_name + "\" not found", false);
+  } else {
+    setSource("src-aux", "Unknown (restart now_playing.py)", false);
+  }
+
+  // Spotify / YouTube, each checked against its Aux channel.
+  function airNote(src) {
+    if (src.on_air === true) return " · on air via Aux " + src.aux;
+    if (src.on_air === false) return " · NOT on air: Aux " + src.aux + " " + src.off_air_reason + " (title not sent)";
+    return " · Aux " + src.aux + " not checked (bridge not connected)";
+  }
+  const spotify = data.spotify || {};
+  if (spotify.state === "playing") setSource("src-spotify", spotify.title + airNote(spotify), spotify.on_air !== false);
+  else if (spotify.state === "idle") setSource("src-spotify", "Open, paused or nothing playing", false);
+  else if (spotify.state === "not_running") setSource("src-spotify", "Spotify isn't open", false);
+  else setSource("src-spotify", "Unknown (restart now_playing.py)", false);
+
+  const youtube = data.youtube || {};
+  if (youtube.state === "playing") setSource("src-youtube", youtube.title + airNote(youtube), youtube.on_air !== false);
+  else if (youtube.state === "idle") setSource("src-youtube", "No YouTube tab is playing sound", false);
+  else if (youtube.state === "no_report") setSource("src-youtube", "No word from the Chrome extension (Chrome closed or extension off?)", false);
+  else setSource("src-youtube", "Unknown (restart now_playing.py)", false);
+
+  // Headline: what's on air and where it's coming from.
+  // Mixxx's title is "Artist - Title"; the on-air text may be reformatted, so
+  // match on the track part.
+  const deckTrack = deckLine.includes(" - ") ? deckLine.slice(deckLine.indexOf(" - ") + 3) : deckLine;
+  const deckOnAir = deckTrack && onAir.toLowerCase().includes(deckTrack.toLowerCase());
+  if (data.source) {
+    setDot("dot-now-playing", "good");
+    stateEl.textContent = data.source + " is playing";
+    valueEl.textContent = data.title;
+  } else if (heldBack(youtube) || heldBack(spotify)) {
+    setDot("dot-now-playing", deckOnAir ? "good" : null);
+    stateEl.textContent = (heldBack(youtube) ? "YouTube" : "Spotify") + " playing but not on air";
+    valueEl.textContent = onAir ? "On air: " + onAir : "Its title isn't being sent.";
+  } else if (deckOnAir) {
+    setDot("dot-now-playing", "good");
+    stateEl.textContent = "Mixxx deck is on air";
+    valueEl.textContent = onAir;
+  } else if (onAir) {
+    setDot("dot-now-playing", null);
+    stateEl.textContent = "No Spotify or YouTube playing";
+    valueEl.textContent = "On air: " + onAir;
+  } else {
+    setDot("dot-now-playing", null);
+    stateEl.textContent = "No Spotify or YouTube playing";
+    valueEl.textContent = caster && caster.state === "on_air" ? "On air with no title" : "Stream isn't on air";
+  }
+  updatedEl.textContent = "Updated " + timeAgo(data.updated_at);
+}
+
+function renderPoller(data, caster) {
+  const stateEl = document.getElementById("state-poller");
+  const valueEl = document.getElementById("value-poller");
+  const detailEl = document.getElementById("detail-poller");
+  const onAirEl = document.getElementById("onair-poller");
+  const updatedEl = document.getElementById("updated-poller");
+  const onAir = onAirTitle(caster);
+  const lastSent = data.last_sent_title;
+  const sentAgo = data.last_push_at ? " (" + timeAgo(data.last_push_at) + ")" : "";
+
+  detailEl.textContent = "";
+  onAirEl.textContent = "";
+  if (data.stale) {
+    setDot("dot-poller", "critical");
+    stateEl.textContent = "Not running";
+    valueEl.textContent = "Spotify and YouTube titles won't reach Caster.fm until nowplaying_poller.py is started.";
+  } else if (data.state === "config_error") {
+    setDot("dot-poller", "critical");
+    stateEl.textContent = "Settings missing";
+    valueEl.textContent = "Add to .env: " + (data.detail || "");
+  } else if (data.state === "retrying") {
+    setDot("dot-poller", "warning");
+    stateEl.textContent = "Couldn't send title";
+    valueEl.textContent = data.title || "";
+    detailEl.textContent = (data.error || "The last attempt failed") + ". Trying again every few seconds.";
+  } else if (data.state === "pushed") {
+    setDot("dot-poller", "good");
+    stateEl.textContent = "Sent to Caster.fm";
+    valueEl.textContent = lastSent || data.title || "";
+    detailEl.textContent = (data.last_push_at ? "Sent " + timeAgo(data.last_push_at) + ". " : "") +
+      "Sends again when the Spotify/YouTube title changes.";
+    if (onAir && lastSent) {
+      onAirEl.textContent = onAir === lastSent
+        ? "✓ Listeners see this title now."
+        : "Listeners now see a different title (probably sent by Mixxx): " + onAir;
+    }
+  } else if (data.state === "override") {
+    setDot("dot-poller", "warning");
+    stateEl.textContent = "Manual override";
+    valueEl.textContent = data.override || "";
+    detailEl.textContent = "Sent by hand" + sentAgo + ". Automatic titles are held back until you clear it.";
+  } else if (data.state === "handed_back") {
+    setDot("dot-poller", "good");
+    stateEl.textContent = "Handed back to Mixxx";
+    valueEl.textContent = lastSent || "";
+    detailEl.textContent = "Spotify/YouTube went off air, so the current Mixxx deck title was sent to replace its title" + sentAgo + ".";
+  } else if (data.state === "idle") {
+    setDot("dot-poller", null);
+    stateEl.textContent = "Standing by";
+    valueEl.textContent = "No Spotify or YouTube title to send. Mixxx deck titles don't need this script.";
+    if (lastSent) {
+      detailEl.textContent = "Last sent: " + lastSent + sentAgo +
+        (data.last_sent_kind === "mixxx_handback" ? ", the Mixxx deck title after Spotify/YouTube went off air" : "");
+    }
+  } else {
+    setDot("dot-poller", null);
+    stateEl.textContent = "Starting…";
+    valueEl.textContent = "";
+  }
+  updatedEl.textContent = "Updated " + timeAgo(data.updated_at);
+}
+
+// Sweet-shop hues across the meter's range: raspberry at silence, through
+// tangerine, to mint and sky in the healthy middle, then grape to bubblegum as
+// the level clips. Interpolated, so the wash slides between neighbours.
+const LEVEL_HUES = [
+  { dbfs: -60, hue: 345 },  // silence -- raspberry
+  { dbfs: -48, hue: 28 },   // very quiet -- tangerine
+  { dbfs: -30, hue: 162 },  // healthy -- mint
+  { dbfs: -12, hue: 200 },  // healthy -- sky
+  { dbfs: -6,  hue: 285 },  // getting hot -- grape
+  { dbfs: -1,  hue: 330 },  // clipping -- bubblegum
+];
+
+function levelHue(level) {
+  if (level <= LEVEL_HUES[0].dbfs) return LEVEL_HUES[0].hue;
+  for (let i = 1; i < LEVEL_HUES.length; i++) {
+    const lo = LEVEL_HUES[i - 1], hi = LEVEL_HUES[i];
+    if (level <= hi.dbfs) {
+      const t = (level - lo.dbfs) / (hi.dbfs - lo.dbfs);
+      // Take the short way round the colour wheel (e.g. 345 -> 28 goes
+      // through red, not backwards through the whole spectrum).
+      let step = hi.hue - lo.hue;
+      if (step > 180) step -= 360;
+      if (step < -180) step += 360;
+      return (lo.hue + t * step + 360) % 360;
+    }
+  }
+  return LEVEL_HUES[LEVEL_HUES.length - 1].hue;
+}
+
+// Paint the whole page from the audio level: two tones a little apart in hue,
+// so the drifting wash shifts tone as the meter moves.
+function setPageTint(data) {
+  const level = data.level_dbfs;
+  const dark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+  let hue, saturation;
+
+  if (data.stale || typeof level !== "number") {
+    hue = 300;                               // monitor not reporting
+    saturation = 10;
+  } else {
+    hue = levelHue(level);
+    // Candy tones: properly saturated, but kept dark enough to sit behind the
+    // cards without glare. The extremes sweeten a little further.
+    const alarm = !isFinite(level) || level <= METER_FLOOR_DBFS + 6 || level >= -3;
+    saturation = 58 + (alarm ? 12 : 0);
+  }
+
+  // Duotone: the second stop sits a short hop round the wheel, so the pair
+  // always reads as one sweet, so the wash is dark in both themes and the
+  // cards read as lit panels on it.
+  const hueB = (hue + 38) % 360;
+  const a = dark ? `hsl(${hue} ${saturation}% 17%)` : `hsl(${hue} ${saturation}% 30%)`;
+  const b = dark ? `hsl(${hueB} ${saturation - 6}% 11%)`
+                 : `hsl(${hueB} ${saturation - 6}% 20%)`;
+  document.body.style.setProperty("--level-a", a);
+  document.body.style.setProperty("--level-b", b);
+}
+
+function renderDeadAir(data) {
+  const stateEl = document.getElementById("state-dead-air");
+  const detailEl = document.getElementById("detail-dead-air");
+  const updatedEl = document.getElementById("updated-dead-air");
+  const meterFill = document.getElementById("meter-dead-air");
+  const meterValue = document.getElementById("meter-value-dead-air");
+
+  detailEl.textContent = data.detail || "";
+
+  let level = "critical";
+  let label = data.state || "Starting…";
+  if (!data.stale) {
+    if (data.state === "AUDIO OK") { level = "good"; }
+    else if (data.state === "SILENCE") { level = "critical"; }
+    else if (data.state === "STREAM OFFLINE") { level = "critical"; }
+    else if (data.state === "LEVEL UNAVAILABLE") { level = "warning"; }
+    else if (data.state === "config_error") { level = "critical"; label = "Config error"; }
+    else { level = null; }
+  } else {
+    label = "Not running";
+  }
+  setDot("dot-dead-air", level);
+  stateEl.textContent = label;
+
+  setPageTint(data);
+
+  if (typeof data.level_dbfs === "number" && isFinite(data.level_dbfs) && !data.stale) {
+    const clamped = Math.max(METER_FLOOR_DBFS, Math.min(0, data.level_dbfs));
+    const pct = ((clamped - METER_FLOOR_DBFS) / (0 - METER_FLOOR_DBFS)) * 100;
+    meterFill.style.width = pct + "%";
+    meterFill.style.background =
+      data.level_dbfs <= METER_FLOOR_DBFS ? "var(--critical)" :
+      data.level_dbfs <= METER_FLOOR_DBFS + 10 ? "var(--warning)" : "var(--good)";
+    meterValue.textContent = data.level_dbfs.toFixed(1) + " dBFS";
+  } else {
+    meterFill.style.width = "0%";
+    meterValue.textContent = "—";
+  }
+
+  updatedEl.textContent = "Updated " + timeAgo(data.updated_at);
+}
+
+function formatDuration(seconds) {
+  if (!isFinite(seconds) || seconds < 0) return null;
+  const h = Math.floor(seconds / 3600);
+  const m = Math.floor((seconds % 3600) / 60);
+  return h > 0 ? h + "h " + m + "m" : m + "m";
+}
+
+function renderCaster(data) {
+  const stateEl = document.getElementById("state-caster");
+  const valueEl = document.getElementById("value-caster");
+  const detailEl = document.getElementById("detail-caster");
+  const show = (id, v) => {
+    document.getElementById(id).textContent = (v === null || v === undefined || v === "") ? "—" : v;
+  };
+
+  valueEl.textContent = "";
+  detailEl.textContent = "";
+  ["listeners-caster", "peak-caster", "bitrate-caster", "uptime-caster",
+   "serverup-caster", "format-caster"].forEach(id => show(id, null));
+  if (data.state !== "on_air") {
+    document.getElementById("history-caster").replaceChildren();
+    document.getElementById("history-label-caster").hidden = true;
+  }
+
+  if (data.state === "on_air") {
+    setDot("dot-caster", "good");
+    stateEl.textContent = "On air";
+    valueEl.textContent = data.title || "";
+    show("listeners-caster", data.listeners);
+    show("peak-caster", data.listener_peak);
+    show("bitrate-caster", data.current_bitrate || data.bitrate ? (data.current_bitrate || data.bitrate) + " kbps" : null);
+    show("format-caster", (data.content_type || "").replace("audio/", "").toUpperCase() || null);
+    // Icecast's stream_start is RFC 2822-ish ("Wed, 17 Sep 2026 20:15:02 -0400"),
+    // which Date.parse handles, as it does stream_start_iso8601. Verified
+    // against the live server: it marks when the source connected and does
+    // NOT reset on metadata changes, so it is broadcast uptime.
+    const start = Date.parse(data.stream_start || "");
+    show("uptime-caster", isNaN(start) ? null : formatDuration((Date.now() - start) / 1000));
+    const serverStart = Date.parse(data.server_start || "");
+    show("serverup-caster", isNaN(serverStart) ? null : formatDuration((Date.now() - serverStart) / 1000));
+    if (data.genre) detailEl.textContent = data.genre;
+
+    const history = document.getElementById("history-caster");
+    history.replaceChildren(...(data.history || []).map(t => {
+      const li = document.createElement("li");
+      li.textContent = t;
+      return li;
+    }));
+    document.getElementById("history-label-caster").hidden = !(data.history || []).length;
+  } else if (data.state === "server_offline") {
+    setDot("dot-caster", "critical");
+    stateEl.textContent = "Server offline";
+    detailEl.textContent = "Caster.fm server isn't running. Start it from the Caster.fm dashboard.";
+  } else if (data.state === "no_source") {
+    setDot("dot-caster", "warning");
+    stateEl.textContent = "No source";
+    detailEl.textContent = "Server is up but nothing is streaming to the mount.";
+  } else if (data.state === "config_error" || data.state === "error") {
+    setDot("dot-caster", "critical");
+    stateEl.textContent = data.state === "error" ? "Stats error" : "Config error";
+    detailEl.textContent = data.detail || "";
+  } else {
+    setDot("dot-caster", null);
+    stateEl.textContent = "Checking…";
+  }
+  document.getElementById("updated-caster").textContent = "Updated " + timeAgo(data.updated_at);
+}
+
+function renderSubtitle(caster) {
+  if (!caster || caster.state !== "on_air") return;
+  const listeners = caster.listeners;
+  document.getElementById("page-subtitle").textContent = [
+    caster.server_name,
+    caster.genre,
+    listeners === 1 ? "1 listener" : (listeners || 0) + " listeners",
+  ].filter(Boolean).join(" · ");
+}
+
+// --- Manual override --------------------------------------------------
+const overrideForm = document.getElementById("override-form");
+const overrideInput = document.getElementById("override-input");
+const overrideState = document.getElementById("override-state");
+const overrideClear = document.getElementById("override-clear");
+let overrideBusyUntil = 0;   // don't fight the user while they type/submit
+
+async function sendOverride(title) {
+  overrideBusyUntil = Date.now() + 3000;
+  try {
+    const res = await fetch("/override", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title }),
+    });
+    if (!res.ok) throw new Error("HTTP " + res.status);
+    overrideInput.value = title;
+  } catch (err) {
+    overrideState.textContent = "Couldn't reach the dashboard server — is dashboard.py still running?";
+  }
+}
+
+overrideForm.addEventListener("submit", e => {
+  e.preventDefault();
+  sendOverride(overrideInput.value.trim());
+});
+overrideClear.addEventListener("click", () => sendOverride(""));
+
+function renderOverride(active, poller) {
+  const isActive = Boolean(active);
+  overrideForm.classList.toggle("is-active", isActive);
+  overrideClear.hidden = !isActive;
+  document.getElementById("override-set").textContent = isActive ? "Replace" : "Set";
+
+  // Leave the field alone while the user is typing or a send is in flight.
+  if (document.activeElement !== overrideInput && Date.now() > overrideBusyUntil) {
+    overrideInput.value = active || "";
+  }
+
+  if (!isActive) {
+    overrideState.textContent = "Off — titles come from Mixxx, Spotify and YouTube automatically.";
+  } else if (poller && poller.stale) {
+    overrideState.textContent = "Set, but nowplaying_poller.py isn't running, so it hasn't been sent.";
+  } else if (poller && poller.state === "retrying") {
+    overrideState.textContent = "On air soon — " + (poller.error || "the last send failed") + ".";
+  } else {
+    overrideState.textContent = "ON AIR — this title is held until you clear it. Spotify, YouTube and Mixxx titles are held back.";
+  }
+}
+
+async function poll() {
+  try {
+    const res = await fetch("/status", { cache: "no-store" });
+    const data = await res.json();
+    renderOverride(data.override, data.poller);
+    renderSubtitle(data.caster);
+    renderNowPlaying(data.now_playing, data.caster);
+    renderPoller(data.poller, data.caster);
+    renderDeadAir(data.dead_air);
+    if (data.caster) renderCaster(data.caster);
+  } catch (err) {
+    // Dashboard server itself is down/unreachable -- next tick will retry.
+  }
+}
+
+poll();
+setInterval(poll, POLL_MS);
+</script>
+</body>
+</html>
