@@ -43,7 +43,7 @@ import os
 import re
 import threading
 import time
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler
 
 import win32con
 import win32gui
@@ -52,6 +52,7 @@ from dotenv import load_dotenv
 
 from mixxx_bridge import MixxxBridge
 from mixxx_window import MIXXX_PROCESS_NAME, mixxx_deck_title, running_pids
+from single_instance import exclusive_http_server, take_over
 from status_writer import write_status
 
 load_dotenv()
@@ -181,7 +182,7 @@ class _MetadataHandler(BaseHTTPRequestHandler):
 
 
 def _start_http_server():
-    server = ThreadingHTTPServer((HTTP_HOST, HTTP_PORT), _MetadataHandler)
+    server = exclusive_http_server((HTTP_HOST, HTTP_PORT), _MetadataHandler)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     return server
@@ -233,6 +234,7 @@ def _source_status(state, title, aux_number, bridge, bridge_connected):
 
 
 def main():
+    take_over(__file__)
     _start_http_server()
     print(f"Listening for YouTube updates on http://{HTTP_HOST}:{HTTP_PORT}")
 

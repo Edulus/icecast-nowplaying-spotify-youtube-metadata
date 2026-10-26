@@ -42,6 +42,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 import caster_stats
+from single_instance import take_over
 from status_writer import write_status
 
 load_dotenv()
@@ -292,6 +293,7 @@ def run(meter, stream, reporter):
 
 
 def main():
+    take_over(__file__)
     if DEAD_AIR_SECONDS <= 0:
         log.error("DEAD_AIR_SECONDS must be greater than zero.")
         write_status(STATUS_FILE, state="config_error", detail="DEAD_AIR_SECONDS must be > 0")

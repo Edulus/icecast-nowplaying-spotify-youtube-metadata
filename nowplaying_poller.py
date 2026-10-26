@@ -23,6 +23,7 @@ import urllib.request
 from dotenv import load_dotenv
 
 from mixxx_window import mixxx_deck_title
+from single_instance import take_over
 from status_writer import write_status
 
 load_dotenv()
@@ -214,6 +215,7 @@ def push_metadata(title):
 
 
 def main():
+    take_over(__file__)
     missing = [
         name for name, value in [
             ("ICECAST_HOST", ICECAST_HOST),

@@ -14,12 +14,13 @@ import json
 import os
 import threading
 import time
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 
 from dotenv import load_dotenv
 
 import caster_stats
+from single_instance import exclusive_http_server, take_over
 
 load_dotenv()
 
@@ -190,8 +191,9 @@ class StatusHandler(BaseHTTPRequestHandler):
 
 
 def main():
+    take_over(__file__)
     threading.Thread(target=_caster_stats_loop, daemon=True).start()
-    server = ThreadingHTTPServer((HTTP_HOST, HTTP_PORT), StatusHandler)
+    server = exclusive_http_server((HTTP_HOST, HTTP_PORT), StatusHandler)
     print(f"TelosFM dashboard: http://{HTTP_HOST}:{HTTP_PORT}")
     try:
         server.serve_forever()
