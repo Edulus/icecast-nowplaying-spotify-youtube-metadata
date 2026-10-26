@@ -12,13 +12,16 @@ crash without affecting metadata pushes or dead-air detection.
 
 import json
 import os
+import sqlite3
 import threading
 import time
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
+from urllib.parse import parse_qs, urlsplit
 
 from dotenv import load_dotenv
 
+import airplay
 import caster_stats
 from single_instance import exclusive_http_server, take_over
 
@@ -38,6 +41,12 @@ POLLER_STATUS_FILE = os.getenv("POLLER_STATUS_FILE", "poller_status.json")
 DEAD_AIR_STATUS_FILE = os.getenv("DEAD_AIR_STATUS_FILE", "dead_air_status.json")
 
 PAGE_PATH = Path(__file__).parent / "dashboard.html"
+AIRPLAY_PAGE_PATH = Path(__file__).parent / "airplay.html"
+
+# Airplay reports read Mixxx's own database (see airplay.py). Cached so the
+# page's polling touches that database once every few minutes at most.
+AIRPLAY_CACHE_SECONDS = float(os.getenv("AIRPLAY_CACHE_SECONDS", "120"))
+_airplay_cache = {}  # days -> (fetched_at, report)
 
 # How often the background thread asks the Caster.fm/Icecast server for
 # listener stats. Polled off the request path so a slow or unreachable server
@@ -97,6 +106,19 @@ def read_override():
         return ""
 
 
+def airplay_report(days):
+    """Cached airplay.report(); an unreadable database becomes an error payload."""
+    cached = _airplay_cache.get(days)
+    if cached and time.time() - cached[0] < AIRPLAY_CACHE_SECONDS:
+        return cached[1]
+    try:
+        result = {"state": "ok", **airplay.report(days)}
+    except (sqlite3.Error, OSError) as e:
+        return {"state": "error", "detail": str(e)}
+    _airplay_cache[days] = (time.time(), result)
+    return result
+
+
 def write_override(title):
     """Replace the override file. Empty title clears the override. Written to
     a temp file first so nowplaying_poller.py never reads a half-written one."""
@@ -107,10 +129,19 @@ def write_override(title):
 
 class StatusHandler(BaseHTTPRequestHandler):
     def do_GET(self):
-        if self.path in ("/", "/index.html"):
+        url = urlsplit(self.path)
+        if url.path in ("/", "/index.html"):
             self._serve_page()
-        elif self.path == "/status":
+        elif url.path == "/status":
             self._serve_status()
+        elif url.path == "/airplay":
+            self._serve_page(AIRPLAY_PAGE_PATH)
+        elif url.path == "/airplay.json":
+            try:
+                days = int(parse_qs(url.query).get("days", ["7"])[0])
+            except ValueError:
+                days = 7
+            self._send_json(airplay_report(max(1, min(days, airplay.MAX_DAYS))))
         else:
             self.send_response(404)
             self.end_headers()
@@ -155,13 +186,13 @@ class StatusHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def _serve_page(self):
+    def _serve_page(self, path=PAGE_PATH):
         try:
-            body = PAGE_PATH.read_bytes()
+            body = path.read_bytes()
         except FileNotFoundError:
             self.send_response(500)
             self.end_headers()
-            self.wfile.write(b"dashboard.html not found next to dashboard.py")
+            self.wfile.write(f"{path.name} not found next to dashboard.py".encode("utf-8"))
             return
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")

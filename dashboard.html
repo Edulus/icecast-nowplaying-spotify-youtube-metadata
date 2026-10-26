@@ -577,6 +577,22 @@
       <a class="open-link" href="https://cloud.caster.fm/" target="_blank" rel="noopener">Open Caster.fm dashboard &#8599;</a>
       <p class="updated" id="updated-caster"></p>
     </div>
+
+    <div class="card" id="card-airplay">
+      <p class="card-label">Airplay &middot; last 7 days</p>
+      <div class="status-row"><span class="dot" id="dot-airplay"></span><span class="state-text" id="state-airplay">&mdash;</span></div>
+      <p class="detail" id="detail-airplay"></p>
+      <dl class="stats">
+        <div><dt>Plays</dt><dd id="plays-airplay">&mdash;</dd></div>
+        <div><dt>Different tracks</dt><dd id="unique-airplay">&mdash;</dd></div>
+        <div><dt>Played 3+ times</dt><dd id="repeats-airplay">&mdash;</dd></div>
+        <div><dt>Top 20 share</dt><dd id="share-airplay">&mdash;</dd></div>
+      </dl>
+      <p class="history-label" id="history-label-airplay" hidden>Most played</p>
+      <ul class="history" id="history-airplay"></ul>
+      <a class="open-link" href="/airplay" target="_blank" rel="noopener">Full airplay report &#8599;</a>
+      <p class="updated" id="updated-airplay"></p>
+    </div>
   </div>
 
 <script>
@@ -1025,6 +1041,53 @@ async function poll() {
 
 poll();
 setInterval(poll, POLL_MS);
+
+// --- Airplay (Mixxx's own play history; see airplay.py) ----------------
+const AIRPLAY_POLL_MS = 60000;
+
+// Share of airtime held by the 20 most played tracks: above 40% the rotation
+// is visibly looping, above 25% it is starting to.
+function renderAirplay(data) {
+  const stateEl = document.getElementById("state-airplay");
+  const detailEl = document.getElementById("detail-airplay");
+  const set = (id, v) => { document.getElementById(id).textContent = v; };
+  const list = document.getElementById("history-airplay");
+  if (data.state !== "ok") {
+    setDot("dot-airplay", "critical");
+    stateEl.textContent = "Can't read Mixxx history";
+    detailEl.textContent = data.detail || "";
+    list.replaceChildren();
+    document.getElementById("history-label-airplay").hidden = true;
+    return;
+  }
+  const share = data.top_20_share;
+  setDot("dot-airplay", share > 40 ? "critical" : share > 25 ? "warning" : "good");
+  stateEl.textContent = share > 40 ? "Heavy repetition" : share > 25 ? "Some repetition" : "Varied";
+  detailEl.textContent = data.hours + " hours on air";
+  set("plays-airplay", data.total_plays);
+  set("unique-airplay", data.unique_tracks);
+  set("repeats-airplay", data.tracks_played_3_plus);
+  set("share-airplay", share + "%");
+  list.replaceChildren(...data.top_tracks.slice(0, 6).map(t => {
+    const li = document.createElement("li");
+    li.textContent = t.plays + "×  \"" + t.title + "\" by " + t.artist;
+    return li;
+  }));
+  document.getElementById("history-label-airplay").hidden = !data.top_tracks.length;
+  set("updated-airplay", "Updated " + new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }));
+}
+
+async function pollAirplay() {
+  try {
+    const res = await fetch("/airplay.json?days=7", { cache: "no-store" });
+    renderAirplay(await res.json());
+  } catch (err) {
+    // Dashboard server unreachable -- the next tick retries.
+  }
+}
+
+pollAirplay();
+setInterval(pollAirplay, AIRPLAY_POLL_MS);
 
 // Background band sliders (see .level-bg::after in the CSS).
 //   Speed: 0-20; 10 slides the bands down at 150 px/s, 20 at 300, 0 stops

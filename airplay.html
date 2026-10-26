@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TelosFM Airplay</title>
+<style>
+  /* Same tokens as dashboard.html, plus the chart's bar color: the accent,
+     re-stepped for dark so it stays inside the validated lightness band. */
+  :root {
+    color-scheme: light;
+    --page: #f2f1ed;
+    --surface: #fffffe;
+    --ink: #14130f;
+    --ink-2: #514f48;
+    --muted: #8a887f;
+    --border: rgba(20,19,15,0.09);
+    --grid: rgba(20,19,15,0.07);
+    --bar: #1f6feb;
+    --good: #12922f;
+    --warning: #b7791f;
+    --critical: #cc3b3b;
+    --shadow: 0 1px 2px rgba(20,19,15,0.05), 0 8px 24px -12px rgba(20,19,15,0.22);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      color-scheme: dark;
+      --page: #0c0c0b;
+      --surface: #1a1a18;
+      --ink: #f7f6f3;
+      --ink-2: #b9b7ad;
+      --muted: #84827a;
+      --border: rgba(255,255,255,0.09);
+      --grid: rgba(255,255,255,0.07);
+      --bar: #4a8ff5;
+      --good: #3fbf5c;
+      --warning: #e0a230;
+      --critical: #f06a6a;
+      --shadow: 0 1px 2px rgba(0,0,0,0.5), 0 10px 28px -14px rgba(0,0,0,0.8);
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 28px 16px 48px;
+    background: var(--page);
+    color: var(--ink);
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  main { max-width: 1100px; margin: 0 auto; display: grid; gap: 18px; }
+  header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 10px 18px; }
+  h1 { font-size: 24px; margin: 0; }
+  .sub { color: var(--muted); font-size: 13px; }
+  .periods { display: flex; gap: 6px; margin-left: auto; }
+  .periods button {
+    font: inherit; font-size: 13px; padding: 6px 12px; border-radius: 999px;
+    border: 1px solid var(--border); background: var(--surface); color: var(--ink-2); cursor: pointer;
+  }
+  .periods button[aria-pressed="true"] { background: var(--ink); color: var(--surface); border-color: var(--ink); }
+  .card {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 14px;
+    padding: 18px 20px; box-shadow: var(--shadow); min-width: 0;
+  }
+  .card h2 {
+    font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase;
+    color: var(--muted); margin: 0 0 12px;
+  }
+  .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 18px; }
+  .tile dt { font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); }
+  .tile dd { margin: 4px 0 0; font-size: 26px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .verdict { font-size: 13px; color: var(--ink-2); margin: 14px 0 0; display: flex; gap: 8px; align-items: center; }
+  .verdict .dot { width: 9px; height: 9px; border-radius: 50%; flex: none; background: var(--muted); }
+  .chart { position: relative; }
+  .chart svg { display: block; width: 100%; height: 220px; overflow: visible; }
+  .chart .axis { font-size: 11px; fill: var(--muted); font-variant-numeric: tabular-nums; }
+  .chart .gridline { stroke: var(--grid); stroke-width: 1; }
+  .chart .bar { fill: var(--bar); }
+  .chart .hit { fill: transparent; cursor: default; }
+  .chart .hit:hover + .bar, .chart .bar.is-hover { opacity: 0.75; }
+  .tip {
+    position: absolute; pointer-events: none; padding: 6px 9px; border-radius: 8px;
+    background: var(--ink); color: var(--surface); font-size: 12px; white-space: nowrap;
+    transform: translate(-50%, -110%); opacity: 0; transition: opacity 80ms;
+  }
+  .tip.is-on { opacity: 1; }
+  .cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 18px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { text-align: left; font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.05em; color: var(--muted); font-weight: 600; padding: 0 8px 6px 0; }
+  td { padding: 6px 8px 6px 0; border-top: 1px solid var(--border); vertical-align: top; }
+  td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  td .meta { color: var(--muted); font-size: 11.5px; }
+  details { font-size: 13px; color: var(--ink-2); margin-top: 10px; }
+  .error { color: var(--critical); }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Airplay</h1>
+    <span class="sub" id="sub">Reading Mixxx history&hellip;</span>
+    <div class="periods" role="group" aria-label="Period">
+      <button type="button" data-days="1">24 h</button>
+      <button type="button" data-days="7">7 days</button>
+      <button type="button" data-days="30">30 days</button>
+      <button type="button" data-days="365">1 year</button>
+    </div>
+  </header>
+
+  <section class="card">
+    <dl class="tiles">
+      <div class="tile"><dt>Plays</dt><dd id="t-plays">&mdash;</dd></div>
+      <div class="tile"><dt>Different tracks</dt><dd id="t-unique">&mdash;</dd></div>
+      <div class="tile"><dt>Played 3+ times</dt><dd id="t-repeats">&mdash;</dd></div>
+      <div class="tile"><dt>Top 20 share of plays</dt><dd id="t-share">&mdash;</dd></div>
+      <div class="tile"><dt>Hours on air</dt><dd id="t-hours">&mdash;</dd></div>
+    </dl>
+    <p class="verdict"><span class="dot" id="v-dot"></span><span id="v-text"></span></p>
+  </section>
+
+  <section class="card">
+    <h2>Plays per day (Eastern time)</h2>
+    <div class="chart" id="chart"><div class="tip" id="tip"></div></div>
+    <details><summary>Show as a table</summary><table id="day-table"></table></details>
+  </section>
+
+  <div class="cols">
+    <section class="card">
+      <h2>Most played tracks</h2>
+      <table id="tracks"></table>
+    </section>
+    <div style="display:grid;gap:18px;align-content:start">
+      <section class="card"><h2>Most played artists</h2><table id="artists"></table></section>
+      <section class="card"><h2>Most played albums</h2><table id="albums"></table></section>
+    </div>
+  </div>
+</main>
+
+<script>
+const params = new URLSearchParams(location.search);
+let days = Number(params.get("days")) || 7;
+
+const el = id => document.getElementById(id);
+const cell = (text, cls) => {
+  const td = document.createElement("td");
+  if (cls) td.className = cls;
+  td.textContent = text;
+  return td;
+};
+const row = (...cells) => {
+  const tr = document.createElement("tr");
+  tr.append(...cells);
+  return tr;
+};
+const head = (...labels) => row(...labels.map(([t, cls]) => {
+  const th = document.createElement("th");
+  th.textContent = t;
+  if (cls) th.className = cls;
+  return th;
+}));
+const when = iso => iso
+  ? new Date(iso).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })
+  : "";
+const dayLabel = d => new Date(d + "T12:00:00").toLocaleDateString([], { month: "short", day: "numeric" });
+
+function renderTables(r) {
+  const tracks = el("tracks");
+  tracks.replaceChildren(head(["Track"], ["Plays", "n"]), ...r.top_tracks.map(t => {
+    const td = document.createElement("td");
+    const title = document.createElement("div");
+    title.textContent = `"${t.title}" by ${t.artist}`;
+    const meta = document.createElement("div");
+    meta.className = "meta";
+    meta.textContent = [t.album, "last " + when(t.last_played)].filter(Boolean).join(" · ");
+    td.append(title, meta);
+    return row(td, cell(t.plays, "n"));
+  }));
+  for (const [id, list] of [["artists", r.top_artists], ["albums", r.top_albums]]) {
+    el(id).replaceChildren(head(["Name"], ["Tracks", "n"], ["Plays", "n"]),
+      ...list.slice(0, 12).map(a => row(cell(a.name), cell(a.tracks, "n"), cell(a.plays, "n"))));
+  }
+  el("day-table").replaceChildren(head(["Day"], ["Plays", "n"]),
+    ...r.plays_per_day.map(d => row(cell(dayLabel(d.day)), cell(d.plays, "n"))));
+}
+
+// One series, so no legend: the card title names it. Bars are anchored to the
+// baseline with 4px rounded tops, a 2px gap between neighbours, and a hit area
+// the full column height so thin bars are still easy to hover.
+function renderChart(r) {
+  const box = el("chart");
+  box.querySelector("svg")?.remove();
+  const data = r.plays_per_day;
+  const W = box.clientWidth || 600, H = 220, padL = 34, padB = 22, padT = 8;
+  const max = Math.max(1, ...data.map(d => d.plays));
+  const step = Math.pow(10, Math.floor(Math.log10(max)));
+  const tick = [1, 2, 5, 10].map(m => m * step).find(s => max / s <= 5);
+  const top = Math.ceil(max / tick) * tick;
+  const ns = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(ns, "svg");
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  svg.setAttribute("role", "img");
+  svg.setAttribute("aria-label", `Plays per day over the last ${r.days} days`);
+  const add = (tag, attrs, text) => {
+    const n = document.createElementNS(ns, tag);
+    for (const k in attrs) n.setAttribute(k, attrs[k]);
+    if (text !== undefined) n.textContent = text;
+    svg.appendChild(n);
+    return n;
+  };
+  const y = v => H - padB - (v / top) * (H - padB - padT);
+  for (let v = 0; v <= top; v += tick) {
+    add("line", { class: "gridline", x1: padL, x2: W, y1: y(v), y2: y(v) });
+    add("text", { class: "axis", x: padL - 6, y: y(v) + 4, "text-anchor": "end" }, v);
+  }
+  const slot = (W - padL) / Math.max(1, data.length);
+  const bw = Math.max(1, slot - 2);
+  const labelEvery = Math.ceil(data.length / Math.max(1, Math.floor((W - padL) / 56)));
+  const tip = el("tip");
+  data.forEach((d, i) => {
+    const x = padL + i * slot + 1;
+    const h = Math.max(0, H - padB - y(d.plays));
+    const rTop = Math.min(4, bw / 2, h);
+    const yt = H - padB - h;
+    const path = `M${x},${H - padB} V${yt + rTop} Q${x},${yt} ${x + rTop},${yt} H${x + bw - rTop} Q${x + bw},${yt} ${x + bw},${yt + rTop} V${H - padB} Z`;
+    const hit = add("rect", { class: "hit", x: x - 1, y: padT, width: slot, height: H - padB - padT });
+    const bar = add("path", { class: "bar", d: path });
+    hit.addEventListener("mouseenter", () => {
+      bar.classList.add("is-hover");
+      tip.textContent = `${dayLabel(d.day)}: ${d.plays} plays`;
+      tip.style.left = (x + bw / 2) / W * 100 + "%";
+      tip.style.top = (yt / H) * 220 + "px";
+      tip.classList.add("is-on");
+    });
+    hit.addEventListener("mouseleave", () => {
+      bar.classList.remove("is-hover");
+      tip.classList.remove("is-on");
+    });
+    if (i % labelEvery === 0) {
+      add("text", { class: "axis", x: x + bw / 2, y: H - 6, "text-anchor": "middle" }, dayLabel(d.day));
+    }
+  });
+  box.insertBefore(svg, tip);
+}
+
+// Thresholds match the dashboard card: above 40% of plays going to 20 tracks
+// the rotation is looping, above 25% it is starting to.
+function renderSummary(r) {
+  el("sub").textContent = `Mixxx deck plays since ${when(r.since)}`;
+  el("t-plays").textContent = r.total_plays;
+  el("t-unique").textContent = r.unique_tracks;
+  el("t-repeats").textContent = r.tracks_played_3_plus;
+  el("t-share").textContent = r.top_20_share + "%";
+  el("t-hours").textContent = r.hours;
+  const s = r.top_20_share;
+  const level = s > 40 ? "critical" : s > 25 ? "warning" : "good";
+  el("v-dot").style.background = `var(--${level})`;
+  el("v-text").textContent = s > 40
+    ? "Heavy repetition: a small set of tracks is looping."
+    : s > 25 ? "Some repetition." : "Varied rotation.";
+}
+
+let last = null;
+async function load() {
+  document.querySelectorAll(".periods button").forEach(b =>
+    b.setAttribute("aria-pressed", String(Number(b.dataset.days) === days)));
+  try {
+    const res = await fetch(`/airplay.json?days=${days}`, { cache: "no-store" });
+    const r = await res.json();
+    if (r.state !== "ok") throw new Error(r.detail || "unreadable");
+    last = r;
+    renderSummary(r);
+    renderChart(r);
+    renderTables(r);
+  } catch (err) {
+    el("sub").innerHTML = "";
+    const span = document.createElement("span");
+    span.className = "error";
+    span.textContent = "Couldn't read Mixxx history: " + err.message;
+    el("sub").appendChild(span);
+  }
+}
+
+document.querySelectorAll(".periods button").forEach(b => b.addEventListener("click", () => {
+  days = Number(b.dataset.days);
+  history.replaceState(null, "", `?days=${days}`);
+  load();
+}));
+addEventListener("resize", () => { if (last) renderChart(last); });
+load();
+setInterval(load, 120000);
+</script>
+</body>
+</html>
