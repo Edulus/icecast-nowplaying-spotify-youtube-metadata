@@ -18,6 +18,14 @@ if not exist "%~dp0.env" (
 
 cd /d "%~dp0"
 
+REM Chrome updates can silently drop the unpacked YouTube extension. Warn, but
+REM still launch: Spotify and Mixxx titles work without it.
+python check_chrome_extension.py
+if errorlevel 1 (
+    echo.
+    pause
+)
+
 start "TelosFM - Now Playing" cmd /k python now_playing.py
 start "TelosFM - Metadata Poller" cmd /k python nowplaying_poller.py
 start "TelosFM - Dead Air Monitor" cmd /k python dead_air_monitor.py
