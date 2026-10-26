@@ -25,7 +25,12 @@ _TERMINATE_WAIT_SECONDS = 5
 
 
 def _same_path(a, b):
-    return os.path.normcase(os.path.normpath(str(a))) == os.path.normcase(os.path.normpath(str(b)))
+    # samefile, not a string compare: it also matches 8.3 short names
+    # ("MR99C0~1") and other spellings of the same file.
+    try:
+        return os.path.samefile(a, b)
+    except OSError:
+        return False
 
 
 def _runs_script(proc, script_path):
@@ -78,6 +83,18 @@ def take_over(script_file):
         if (proc.info["name"] or "").lower().startswith("python") and _runs_script(proc, script_path):
             others[proc.pid] = proc
 
+    # The launcher runs each script under "cmd /k", which keeps the console
+    # window open at a prompt once the script is gone; close that too.
+    windows = []
+    for proc in others.values():
+        try:
+            parent = proc.parent()
+            if (parent and parent.name().lower() == "cmd.exe"
+                    and any(script_path.name.lower() in arg.lower() for arg in parent.cmdline())):
+                windows.append(parent)
+        except psutil.Error:
+            pass
+
     for proc in others.values():
         print(f"Closing the copy of {script_path.name} already running (PID {proc.pid}).")
         try:
@@ -97,6 +114,11 @@ def take_over(script_file):
         except psutil.Error:
             pass
     psutil.wait_procs(alive, timeout=_TERMINATE_WAIT_SECONDS)
+    for window in windows:
+        try:
+            window.terminate()
+        except psutil.Error:
+            pass  # best-effort: a leftover window is untidy, not harmful
 
     try:
         created = psutil.Process(me).create_time()
