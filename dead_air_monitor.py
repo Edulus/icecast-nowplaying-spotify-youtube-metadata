@@ -37,13 +37,13 @@ import math
 import os
 import threading
 import time
-from pathlib import Path
 
 from dotenv import load_dotenv
 
 import caster_stats
 from single_instance import take_over
 from status_writer import write_status
+from voicemeeter import VOICEMEETER_LAYOUT, find_voicemeeter_dll
 
 load_dotenv()
 
@@ -59,18 +59,13 @@ STREAM_CHECK_INTERVAL = float(os.getenv("DEAD_AIR_STREAM_CHECK_SECONDS", "5"))
 # strips are 5 hardware + VAIO (5), AUX (6), VAIO3 (7), so AUX is 6.
 VOICEMEETER_STRIP = int(os.getenv("DEAD_AIR_VOICEMEETER_STRIP", "6"))
 
-# Optional full path to VoicemeeterRemote64.dll; found automatically if blank.
-VOICEMEETER_DLL = os.getenv("VOICEMEETER_DLL")
-
 # Meter sampling. Levels are peak readings, so the loudest sample in each
 # window is used: a window is "quiet" only if nothing in it rose above the
 # threshold.
 SAMPLE_SECONDS = 0.05
 WINDOW_SECONDS = 1.0
 
-# Voicemeeter type -> (hardware strip count, virtual strip count). Hardware
-# strips have 2 meter channels each, virtual strips 8.
-_VOICEMEETER_LAYOUT = {1: (2, 1), 2: (3, 2), 3: (5, 3)}
+# Hardware strips have 2 meter channels each, virtual strips 8.
 _LEVEL_PRE_FADER_INPUT = 0
 
 LOG_FILE = "dead_air_monitor.log"
@@ -85,44 +80,6 @@ log = logging.getLogger(__name__)
 
 def to_dbfs(linear):
     return 20.0 * math.log10(linear) if linear > 0 else float("-inf")
-
-
-def find_voicemeeter_dll():
-    if VOICEMEETER_DLL:
-        return Path(VOICEMEETER_DLL)
-
-    candidates = []
-    # VB-Audio's documented way to locate the install folder.
-    try:
-        import winreg
-
-        key_path = (
-            r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall"
-            r"\VB:Voicemeeter {17359A74-1236-5467}"
-        )
-        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, key_path) as key:
-            uninstall = winreg.QueryValueEx(key, "UninstallString")[0]
-        candidates.append(Path(uninstall.strip('"')).parent)
-    except OSError:
-        pass
-
-    # Fall back to wherever the running Voicemeeter executable lives.
-    try:
-        import psutil
-
-        for proc in psutil.process_iter(["name", "exe"]):
-            if (proc.info["name"] or "").lower().startswith("voicemeeter") and proc.info["exe"]:
-                candidates.append(Path(proc.info["exe"]).parent)
-    except ImportError:
-        pass
-
-    candidates.append(Path(r"C:\Program Files (x86)\VB\Voicemeeter"))
-
-    for folder in candidates:
-        dll = folder / "VoicemeeterRemote64.dll"
-        if dll.is_file():
-            return dll
-    return None
 
 
 class VoicemeeterMeter:
@@ -146,7 +103,7 @@ class VoicemeeterMeter:
             vm_type = ctypes.c_long()
             if self.dll.VBVMR_GetVoicemeeterType(ctypes.byref(vm_type)) != 0:
                 return False
-            layout = _VOICEMEETER_LAYOUT.get(vm_type.value)
+            layout = VOICEMEETER_LAYOUT.get(vm_type.value)
             if layout is None:
                 raise RuntimeError(f"unknown Voicemeeter type {vm_type.value}")
             hardware, virtual = layout

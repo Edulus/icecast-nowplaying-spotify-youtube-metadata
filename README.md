@@ -133,10 +133,17 @@ Spotify and YouTube titles should only go on air when their audio does.
 Mixxx has no external API for its mixer, so a small controller mapping in
 `mixxx-bridge/` reports each Aux channel's PLAY button, faders, deck play
 state and the crossfader over a virtual MIDI port. `now_playing.py` reads it
-(`mixxx_bridge.py`) and only passes a Spotify/YouTube title on while that
-source's Aux (`SPOTIFY_AUX` / `YOUTUBE_AUX` in `.env`, default 1 and 2) is
-feeding the main mix. Without the bridge, titles are sent unchecked and the
-dashboard says so.
+(`mixxx_bridge.py`) and only passes a Spotify/YouTube title on while one of
+that source's Aux inputs is feeding the main mix. Without the bridge, titles
+are sent unchecked and the dashboard says so.
+
+Which Aux inputs a source reaches is read live (`audio_routing.py`): Windows
+reports the playback device each app plays into (the Voicemeeter input
+picked in EarTrumpet, say), and Voicemeeter reports which B buses that strip
+sends to. `VOICEMEETER_BUS_AUX` (default `1,2,3`) maps B1/B2/B3 to Mixxx's
+Aux 1/2/3. If the route can't be read, `SPOTIFY_AUX` / `YOUTUBE_AUX` in
+`.env` (default 1 and 2) are used instead. Audio playing to a device outside
+Voicemeeter (e.g. the speakers) counts as off air.
 
 When a Spotify/YouTube title is on air and that source goes off air,
 `nowplaying_poller.py` sends the current Mixxx deck title once (read from

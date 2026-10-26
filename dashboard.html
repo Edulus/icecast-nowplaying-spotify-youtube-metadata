@@ -546,11 +546,16 @@ function renderNowPlaying(data, caster) {
     setSource("src-aux", "Unknown (restart now_playing.py)", false);
   }
 
-  // Spotify / YouTube, each checked against its Aux channel.
+  // Spotify / YouTube, each checked against the Aux channels its audio
+  // reaches (read from Voicemeeter, or the fixed .env Aux as a fallback).
   function airNote(src) {
-    if (src.on_air === true) return " · on air via Aux " + src.aux;
-    if (src.on_air === false) return " · NOT on air: Aux " + src.aux + " " + src.off_air_reason + " (title not sent)";
-    return " · Aux " + src.aux + " not checked (bridge not connected)";
+    const auxes = src.auxes || [];
+    const route = src.route
+      ? " · " + src.route.devices.join(" + ") + " → " + (src.route.buses.join(" ") || "no B bus")
+      : (auxes.length ? " · Aux " + auxes[0] + " (fixed in .env; route not readable)" : "");
+    if (src.on_air === true) return route + " · on air via Aux " + src.live_auxes.join(", ");
+    if (src.on_air === false) return route + " · NOT on air: " + src.off_air_reason + " (title not sent)";
+    return route + " · Aux " + auxes.join(", ") + " not checked (bridge not connected)";
   }
   const spotify = data.spotify || {};
   if (spotify.state === "playing") setSource("src-spotify", spotify.title + airNote(spotify), spotify.on_air !== false);

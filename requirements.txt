@@ -1,3 +1,5 @@
 pywin32
 psutil
 python-dotenv
+pycaw
+comtypes

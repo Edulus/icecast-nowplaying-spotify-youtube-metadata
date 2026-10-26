@@ -24,11 +24,15 @@ YouTube detection:
     Otherwise we fall back to whatever Spotify reports.
 
 Aux on-air check:
-    Spotify and YouTube reach the broadcast through fixed Mixxx Aux inputs
-    (SPOTIFY_AUX / YOUTUBE_AUX). A source's title is only written when its
-    Aux is feeding the main mix -- PLAY on, fader up, not crossfaded out --
-    as reported by the TelosFM Bridge mapping over MIDI (mixxx_bridge.py).
-    If the bridge isn't connected, titles are written unchecked as before.
+    Spotify and YouTube reach Mixxx's Aux inputs through Voicemeeter, and the
+    route changes (EarTrumpet picks the Voicemeeter input per app, the
+    strip's B buttons pick the buses). audio_routing.py reads that route live
+    to find which Aux inputs a source reaches; SPOTIFY_AUX / YOUTUBE_AUX are
+    only the fallback when it can't be read. A source's title is only written
+    when one of its Aux inputs is feeding the main mix -- PLAY on, fader up,
+    not crossfaded out -- as reported by the TelosFM Bridge mapping over MIDI
+    (mixxx_bridge.py). If the bridge isn't connected, titles are written
+    unchecked, unless the route shows the audio doesn't reach Mixxx at all.
 
 Mixxx deck detection (dashboard only):
     Mixxx sends its own deck titles to Icecast, so they are never written to
@@ -50,6 +54,7 @@ import win32gui
 import win32process
 from dotenv import load_dotenv
 
+from audio_routing import VoicemeeterRouting, playback_devices_by_process
 from mixxx_bridge import MixxxBridge
 from mixxx_window import MIXXX_PROCESS_NAME, mixxx_deck_title, running_pids
 from single_instance import exclusive_http_server, take_over
@@ -66,10 +71,10 @@ HTTP_PORT = 8765
 YOUTUBE_FRESH_SECONDS = 90
 
 SPOTIFY_PROCESS_NAME = "spotify.exe"
+CHROME_PROCESS_NAME = "chrome.exe"
 
-# Fixed routing policy: which Mixxx Aux input each source plays through. A
-# source's title is only sent while that Aux is feeding the broadcast
-# (checked through the TelosFM Bridge mapping; see mixxx_bridge.py).
+# Fallback Mixxx Aux input for each source, used only when its live
+# Voicemeeter route can't be read (see audio_routing.py).
 SPOTIFY_AUX = int(os.getenv("SPOTIFY_AUX", "1"))
 YOUTUBE_AUX = int(os.getenv("YOUTUBE_AUX", "2"))
 
@@ -219,13 +224,30 @@ def _youtube_state(youtube_title):
     return "no_report"
 
 
-def _source_status(state, title, aux_number, bridge, bridge_connected):
-    """Per-source status, including whether its Aux channel is on air."""
-    status = {"state": state, "title": title, "aux": aux_number}
-    if bridge_connected:
-        aux = bridge.aux(aux_number)
-        status["on_air"] = aux["live"]
-        status["off_air_reason"] = aux["reason"]
+def _source_route(process_name, devices_by_process, routing):
+    """Live Voicemeeter route of a source's audio, or None when it can't be
+    worked out (no sound from it right now, or Windows/Voicemeeter can't be
+    read)."""
+    if not devices_by_process or process_name not in devices_by_process:
+        return None
+    return routing.route(devices_by_process[process_name])
+
+
+def _source_status(state, title, route, fallback_aux, bridge, bridge_connected):
+    """Per-source status, including whether any of its Aux channels is on air."""
+    auxes = route["auxes"] if route else [fallback_aux]
+    status = {"state": state, "title": title, "route": route, "auxes": auxes,
+              "live_auxes": None, "off_air_reason": None}
+    if not auxes:
+        # The route shows its audio never reaches a Mixxx Aux input.
+        status["on_air"] = False
+        status["off_air_reason"] = route["note"] or "its audio doesn't reach a Mixxx Aux input"
+    elif bridge_connected:
+        live = [n for n in auxes if bridge.aux(n)["live"]]
+        status["live_auxes"] = live
+        status["on_air"] = bool(live)
+        if not live:
+            status["off_air_reason"] = "; ".join(f"Aux {n} {bridge.aux(n)['reason']}" for n in auxes)
     else:
         # Without the bridge there's no way to check the Aux PLAY button, so
         # a playing source is assumed on air (the pre-bridge behaviour).
@@ -242,8 +264,10 @@ def main():
     bridge.start()
     print(
         f"Mixxx bridge: listening on MIDI port {bridge.port_name!r} "
-        f"(Spotify = Aux {SPOTIFY_AUX}, YouTube = Aux {YOUTUBE_AUX})"
+        f"(Aux inputs read from Voicemeeter routing; fallback Spotify = Aux {SPOTIFY_AUX}, "
+        f"YouTube = Aux {YOUTUBE_AUX})"
     )
+    routing = VoicemeeterRouting()
 
     # Sentinel rather than None so the first pass always writes the file,
     # clearing any title left over from a previous run.
@@ -264,9 +288,16 @@ def main():
             spotify_state = "playing"
         else:
             spotify_state = "idle" if spotify_pids else "not_running"
-        spotify = _source_status(spotify_state, spotify_title, SPOTIFY_AUX, bridge, bridge_connected)
+        devices_by_process = playback_devices_by_process()
+        spotify = _source_status(
+            spotify_state, spotify_title,
+            _source_route(SPOTIFY_PROCESS_NAME, devices_by_process, routing),
+            SPOTIFY_AUX, bridge, bridge_connected,
+        )
         youtube = _source_status(
-            _youtube_state(youtube_title), youtube_title, YOUTUBE_AUX, bridge, bridge_connected
+            _youtube_state(youtube_title), youtube_title,
+            _source_route(CHROME_PROCESS_NAME, devices_by_process, routing),
+            YOUTUBE_AUX, bridge, bridge_connected,
         )
 
         # Only a source whose Aux is actually feeding the broadcast gets its
