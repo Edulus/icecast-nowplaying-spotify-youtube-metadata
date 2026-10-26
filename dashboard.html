@@ -78,25 +78,57 @@
     inset: -25%;
     z-index: -1;
     pointer-events: none;
-    /* A repeating 135deg band (top-left -> bottom-right) plus softer bands at
-       a slightly different period, so the wash keeps flowing without the two
-       layers ever lining up into a visible seam. */
+    overflow: hidden;
     background:
-      repeating-linear-gradient(135deg,
-        transparent 0px,
-        color-mix(in srgb, var(--level-b) 60%, transparent) 300px,
-        transparent 600px),
       repeating-linear-gradient(135deg,
         var(--level-a) 0px, var(--level-b) 420px, var(--level-a) 840px);
     animation: flow 20s linear infinite;
   }
-  /* Each layer shifts by exactly one of its own periods (period / sqrt(2) in
-     x and y), so the loop restarts seamlessly. The layers have different
-     periods, so they drift at different speeds and never line up. */
+  /* The base gradient shifts by exactly one period (840px / sqrt(2) in x and
+     y), so the loop restarts seamlessly. */
   @keyframes flow {
-    from { background-position: 0 0, 0 0; }
-    to   { background-position: 424px 424px, 594px 594px; }
+    from { background-position: 0 0; }
+    to   { background-position: 594px 594px; }
   }
+  /* Lighter diagonal bands that keep sliding down the screen. The band
+     sliders (script at the bottom) set these three:
+       --band-tile      repeat distance, measured vertically (px)
+       --band-half      half of one band's width (px)
+       --band-duration  time to slide down one --band-tile
+     The bands are a repeating 135deg gradient in a square tile of side
+     --band-tile, which holds exactly two of its periods (tile / sqrt(2)), so
+     neighbouring tiles join seamlessly: no edges anywhere. Sliding down by
+     one tile height loops seamlessly too. Widths are px: a percentage of
+     this oversized layer reads as the whole background changing tint. */
+  .level-bg {
+    --band-tile: 1600px;
+    --band-half: 160px;
+    --band-duration: 10.7s;
+  }
+  .level-bg::after {
+    --band-period: calc(var(--band-tile) * 0.70710678);
+    /* The Hue slider replaces this with a fixed hsl() colour; Auto keeps it. */
+    --band-color: var(--band-hue-color, color-mix(in srgb, var(--level-b), white 45%));
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: repeating-linear-gradient(135deg,
+      transparent 0px,
+      transparent calc(var(--band-period) / 2 - var(--band-half)),
+      var(--band-color) calc(var(--band-period) / 2),
+      transparent calc(var(--band-period) / 2 + var(--band-half)),
+      transparent var(--band-period));
+    background-size: var(--band-tile) var(--band-tile);
+    opacity: 0.85;
+    animation: sweep var(--band-duration) linear infinite;
+  }
+  @keyframes sweep {
+    from { background-position: 0 0; }
+    to   { background-position: 0 var(--band-tile); }
+  }
+  /* Reduced motion stops the base drift only. The band is left to the Band
+     speed slider (0 stops it), so it still moves when Windows' "Animation
+     effects" is off. */
   @media (prefers-reduced-motion: reduce) {
     .level-bg { animation: none; }
   }
@@ -121,6 +153,60 @@
     color: rgba(246,245,241,0.72);
     font-size: 12.5px;
     margin: 0;
+  }
+  /* Background band sliders: sit at the right end of the header. */
+  .band-controls {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 6px 18px;
+    flex-wrap: wrap;
+  }
+  .band-control {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: rgba(246,245,241,0.72);
+    font-size: 12px;
+  }
+  .band-control label {
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    font-size: 10.5px;
+    font-weight: 600;
+  }
+  .band-control input { width: 110px; accent-color: #f6f5f1; }
+  .band-control output {
+    min-width: 6.5em;
+    color: #f6f5f1;
+    font-variant-numeric: tabular-nums;
+  }
+  /* Hue slider tracks show the colour wheel; Auto sits at the left end. */
+  .band-control .hue-slider {
+    -webkit-appearance: none;
+    appearance: none;
+    height: 8px;
+    border-radius: 4px;
+    background: linear-gradient(90deg,
+      hsl(0 75% 70%), hsl(60 75% 70%), hsl(120 75% 70%), hsl(180 75% 70%),
+      hsl(240 75% 70%), hsl(300 75% 70%), hsl(360 75% 70%));
+  }
+  .band-control .hue-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: #f6f5f1;
+    border: 2px solid rgba(0,0,0,0.45);
+  }
+  .band-swatch {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    margin-right: 5px;
+    vertical-align: -1px;
+    border: 1px solid rgba(255,255,255,0.6);
   }
   /* Manual override bar: sits on the wash with the header, above the cards. */
   .override-bar {
@@ -400,6 +486,33 @@
   <header class="page-head">
     <h1>TelosFM Dashboard</h1>
     <p class="subtitle" id="page-subtitle">now_playing.py &middot; nowplaying_poller.py &middot; dead_air_monitor.py &middot; Caster.fm</p>
+    <div class="band-controls">
+      <div class="band-control">
+        <label for="band-speed">Band speed</label>
+        <input type="range" id="band-speed" min="0" max="20" step="1" value="10">
+        <output id="band-speed-value" for="band-speed"></output>
+      </div>
+      <div class="band-control">
+        <label for="band-width">Width</label>
+        <input type="range" id="band-width" min="40" max="800" step="20" value="320">
+        <output id="band-width-value" for="band-width"></output>
+      </div>
+      <div class="band-control">
+        <label for="band-frequency">Frequency</label>
+        <input type="range" id="band-frequency" min="1" max="8" step="1" value="1">
+        <output id="band-frequency-value" for="band-frequency"></output>
+      </div>
+      <div class="band-control">
+        <label for="band-hue">Band hue</label>
+        <input type="range" class="hue-slider" id="band-hue" min="0" max="360" step="5" value="0">
+        <output id="band-hue-value" for="band-hue"></output>
+      </div>
+      <div class="band-control">
+        <label for="bg-hue">Background hue</label>
+        <input type="range" class="hue-slider" id="bg-hue" min="0" max="360" step="5" value="0">
+        <output id="bg-hue-value" for="bg-hue"></output>
+      </div>
+    </div>
   </header>
 
   <form class="override-bar" id="override-form" autocomplete="off">
@@ -691,7 +804,10 @@ function levelHue(level) {
 
 // Paint the whole page from the audio level: two tones a little apart in hue,
 // so the drifting wash shifts tone as the meter moves.
+let lastTintData = null;  // so the Background hue slider can re-tint at once
+
 function setPageTint(data) {
+  lastTintData = data;
   const level = data.level_dbfs;
   const dark = window.matchMedia("(prefers-color-scheme: dark)").matches;
   let hue, saturation;
@@ -706,6 +822,10 @@ function setPageTint(data) {
     const alarm = !isFinite(level) || level <= METER_FLOOR_DBFS + 6 || level >= -3;
     saturation = 58 + (alarm ? 12 : 0);
   }
+  // Background hue slider: 0 = Auto (hue from the audio level, above);
+  // otherwise that hue, keeping the level's saturation.
+  const fixedHue = Number(document.getElementById("bg-hue").value);
+  if (fixedHue) hue = fixedHue % 360;
 
   // Duotone: the second stop sits a short hop round the wheel, so the pair
   // always reads as one sweet, so the wash is dark in both themes and the
@@ -905,6 +1025,78 @@ async function poll() {
 
 poll();
 setInterval(poll, POLL_MS);
+
+// Background band sliders (see .level-bg::after in the CSS).
+//   Speed: 0-20; 10 slides the bands down at 150 px/s, 20 at 300, 0 stops
+//     them. Set as playbackRate, so changing it never makes the bands jump.
+//   Width: one band's full width in px.
+//   Frequency: how many bands fit across the screen at once.
+//   Band hue: 0 = Auto (a lighter shade of the background); 5-360 = that hue.
+//   Background hue: 0 = Auto (from the audio level); 5-360 = that hue. Read
+//     by setPageTint().
+const BAND_BASE_SPEED = 10;
+const BAND_BASE_PX_PER_SECOND = 150;
+const bandLayer = document.querySelector(".level-bg");
+const bandSliders = {
+  speed: document.getElementById("band-speed"),
+  width: document.getElementById("band-width"),
+  frequency: document.getElementById("band-frequency"),
+  hue: document.getElementById("band-hue"),
+  bgHue: document.getElementById("bg-hue"),
+};
+const BAND_HUE_COLOR = hue => `hsl(${hue} 75% 72%)`;
+
+function bandAnimations() {
+  return document.getAnimations().filter(a => a.animationName === "sweep");
+}
+
+function applyBands() {
+  const speed = Number(bandSliders.speed.value);
+  const width = Number(bandSliders.width.value);
+  const frequency = Number(bandSliders.frequency.value);
+  const hue = Number(bandSliders.hue.value);
+  const bgHue = Number(bandSliders.bgHue.value);
+
+  // A band crosses the screen along its diagonal, which spans
+  // (width + height) px measured vertically; split that into `frequency`
+  // repeats. Whole px, so the tiles join without a seam.
+  const tile = Math.max(1, Math.round((window.innerWidth + window.innerHeight) / frequency));
+  // A band can't be wider than its repeat distance; past that the bands merge.
+  const half = Math.min(width / 2, tile * 0.70710678 / 2 - 10);
+  bandLayer.style.setProperty("--band-tile", tile + "px");
+  bandLayer.style.setProperty("--band-half", Math.max(half, 1) + "px");
+  bandLayer.style.setProperty("--band-duration", (tile / BAND_BASE_PX_PER_SECOND) + "s");
+  if (hue === 0) bandLayer.style.removeProperty("--band-hue-color");
+  else bandLayer.style.setProperty("--band-hue-color", BAND_HUE_COLOR(hue));
+  bandAnimations().forEach(a => a.updatePlaybackRate(speed / BAND_BASE_SPEED));
+
+  document.getElementById("band-speed-value").textContent = speed === 0 ? "0 · stopped"
+    : speed + " · " + Math.round(BAND_BASE_PX_PER_SECOND * speed / BAND_BASE_SPEED) + " px/s";
+  document.getElementById("band-width-value").textContent = width + " px";
+  document.getElementById("band-frequency-value").textContent =
+    frequency + (frequency === 1 ? " band" : " bands") + " on screen";
+  document.getElementById("band-hue-value").innerHTML =
+    '<span class="band-swatch" style="background:' + (hue === 0 ? "transparent" : BAND_HUE_COLOR(hue)) + '"></span>'
+    + (hue === 0 ? "Auto" : hue + "°");
+  document.getElementById("bg-hue-value").innerHTML =
+    '<span class="band-swatch" style="background:' + (bgHue === 0 ? "transparent" : BAND_HUE_COLOR(bgHue)) + '"></span>'
+    + (bgHue === 0 ? "Auto" : bgHue + "°");
+  if (lastTintData) setPageTint(lastTintData);
+
+  try {
+    localStorage.setItem("bandSettings", JSON.stringify({ speed, width, frequency, hue, bgHue }));
+  } catch (e) {}
+}
+
+try {
+  const saved = JSON.parse(localStorage.getItem("bandSettings") || "{}");
+  for (const key of Object.keys(bandSliders)) {
+    if (saved[key] !== undefined) bandSliders[key].value = saved[key];
+  }
+} catch (e) {}
+Object.values(bandSliders).forEach(s => s.addEventListener("input", applyBands));
+window.addEventListener("resize", applyBands);
+applyBands();
 </script>
 </body>
 </html>
