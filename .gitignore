@@ -4,4 +4,5 @@ now_playing.txt
 *_status.json
 __pycache__/
 *.pyc
+track_notes.json
 *.pid
