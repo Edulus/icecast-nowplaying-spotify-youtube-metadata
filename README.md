@@ -149,7 +149,10 @@ When a Spotify/YouTube title is on air and that source goes off air,
 `nowplaying_poller.py` sends the current Mixxx deck title once (read from
 Mixxx's window title via `mixxx_window.py`, in the same `"$title" by $artist`
 format as Mixxx's broadcast profile). Otherwise the stale title would stay
-up until Mixxx's next track change.
+up until Mixxx's next track change. If no deck title is available for that
+handback, Caster.fm can continue showing the last YouTube/Spotify title even
+while the broadcast is silent. The dead-air monitor reports the audio state
+independently of the displayed title.
 
 One-time setup:
 
@@ -162,6 +165,27 @@ One-time setup:
    load the **TelosFM Bridge** mapping, tick **Enabled**, and apply.
 4. Restart `now_playing.py`. The dashboard's "Aux PLAY" row shows each Aux
    as on air or off once the bridge is connected.
+
+### Verify a YouTube route
+
+With the default B-bus mapping, the following was verified with YouTube in
+Chrome routed through Voicemeeter B2 into Mixxx Aux 2:
+
+1. Play a YouTube video and enable B2 on Chrome's Voicemeeter input strip.
+   With Mixxx Aux 2 PLAY off, the dashboard should show the B2 route and
+   `NOT on air: Aux 2 PLAY is off`; the poller should hold back its title.
+2. Pause the Mixxx deck before enabling Aux 2 PLAY if you do not want the
+   deck and YouTube audio playing together. With Aux 2 on, the dashboard
+   should show `on air via Aux 2`, and the poller and Caster.fm should show
+   the YouTube title. Listen to the public player to verify the audio too.
+3. Turn Aux 2 PLAY off to check that the dashboard marks YouTube off air
+   again. If no other source is playing, the broadcast will be silent; turn
+   Aux 2 back on or resume a Mixxx deck to restore audio.
+
+If the dashboard reports that the bridge is disconnected, check that the
+loopMIDI port exists and that the TelosFM Bridge mapping is enabled in Mixxx
+Preferences → Controllers. The dashboard's Aux PLAY row will show the input
+states when communication resumes.
 
 ## Icecast metadata endpoint and auth
 
